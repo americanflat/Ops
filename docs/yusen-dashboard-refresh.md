@@ -40,9 +40,21 @@ chain short-circuited on the failed `cd` and the refresh script never ran.
 cleanly — and the prompt told it to report the error and stop, which it did.
 A green Routine is not evidence the dashboard was republished.
 
-**Fix.** Step 1 of both prompts now clones a fresh checkout into
-`/tmp/yusen-refresh` instead of assuming a pre-existing directory, so the job
-no longer depends on how the environment's sources are configured.
+**Fix.** Step 1 of both prompts now clones a fresh checkout instead of assuming
+a pre-existing directory, so the job no longer depends on how the environment's
+sources are configured.
+
+**Second fault — the publish itself.** Fixing the path was not enough. The next
+two runs completed, reported SUCCEEDED, and still produced no new artifact
+version. The cause: a publish from a session that has never *read* the artifact
+is refused as a conflict, and these sessions only ever published. Both prompts
+now call the Artifact tool with `action: "read"` before publishing. Verified
+2026-08-28 16:28:35Z — a fired run published for the first time since Aug 21.
+
+Neither fault announced itself. Both runs reported `ROUTINE_RUN_STATUS_SUCCEEDED`
+because the session finished cleanly; the prompt told it to report the error and
+stop, which it did. **Never treat a green Routine as evidence the dashboard was
+republished — check the artifact's version timestamp.**
 
 ## Where the fingerprint lives
 
@@ -84,6 +96,30 @@ Every BigQuery interaction in the wrapper degrades to "republish anyway":
 
 So a permissions problem costs a redundant republish, never a stale dashboard —
 the same behaviour the pipeline had before the wrapper existed.
+
+### Not yet working: the write is denied
+
+As of 2026-08-28 the state write does **not** land. The warehouse credential
+these sessions use can read everything, and can run DML against `finance`, but:
+
+| Operation | Result |
+| --- | --- |
+| `bigquery.tables.updateData` on `observability.pipeline_runs` | DENIED |
+| `bigquery.tables.create` on `finance` | DENIED |
+| DML on existing `finance` tables (e.g. `yusen_invoices`) | allowed |
+
+`finance` holds only `freight_invoices`, `vendor_payment_invoices`,
+`vendor_payments` and `yusen_invoices` — none of them a sane home for dashboard
+state — so there is currently nowhere the state can be written.
+
+The gate therefore still fails open on every run: `record` prints a WARNING,
+exits 0, and the next run republishes. That is the pre-existing behaviour, so
+nothing regressed, but the redundant republishes continue.
+
+Smallest fix: grant `bigquery.tables.updateData` (or `roles/bigquery.dataEditor`)
+on the `observability` dataset. No code change — the wrapper starts working the
+moment the grant lands. Alternative: grant `bigquery.tables.create` on `finance`
+and give the state its own table there.
 
 To inspect the recorded state:
 
