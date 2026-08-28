@@ -44,34 +44,68 @@ A green Routine is not evidence the dashboard was republished.
 `/tmp/yusen-refresh` instead of assuming a pre-existing directory, so the job
 no longer depends on how the environment's sources are configured.
 
-## Known gap: the fingerprint gate does not persist
+## Where the fingerprint lives
 
-`.dashboard-state.json` records the last published fingerprint so an unchanged
-day can skip the republish. It has not been committed since 2026-08-07 — the
-Routine's push step needs write access to `anthony-amf/americanflat-ops-director`,
-and the refresh sessions only have anonymous read.
+`refresh_artifact_dashboard.py` gates the republish on a fingerprint of the
+rendered data, and records the last published fingerprint via `--state <path>`.
+It originally wrote that to `.dashboard-state.json` in its own repo and expected
+the caller to commit and push it back.
 
-So the gate always sees a stale fingerprint, always reports `CHANGED`, and
-republishes every run. That is wasteful but harmless, and it is the behaviour
-that kept the dashboard current before the path broke. Step 3 of each prompt
-now treats the push as best-effort and does not fail the run over it.
+That push never worked. The scheduled sessions only have anonymous read on
+`anthony-amf/americanflat-ops-director`, so the state froze at its 2026-08-07
+value, the gate always saw a stale fingerprint, and every run republished
+identical data — defeating the whole point of the gate.
 
-To actually close the gap, the refresh sessions need push credentials for that
-repo, or the state file needs to live somewhere they can write.
+State now lives in BigQuery instead, in
+`americanflat.observability.pipeline_runs`, reached over the same
+proxy-injected credentials the refresh already uses. One row per publish, with
+the fingerprint in the existing `extra` JSON column. No git push, no new
+credentials, and no DDL. (A dedicated `finance.dashboard_state` table was the
+first choice, but `bigquery.tables.create` is denied on that dataset.)
+
+`tools/yusen_dashboard_refresh.py` in this repo is the wrapper that does it:
+
+* `run` — clone the refresh repo, seed the upstream state file from BigQuery,
+  run the refresh, and print the upstream's `NO_CHANGE` / `CHANGED` line.
+* `record` — append the just-published fingerprint to `pipeline_runs`. Run it
+  only after the Artifact publish actually succeeded.
+
+The upstream script is untouched; the wrapper only swaps the state backend via
+its existing `--state` flag. Nothing is duplicated between the two repos.
+
+### Fail-open
+
+Every BigQuery interaction in the wrapper degrades to "republish anyway":
+
+* state read fails or finds nothing → no seed file → the gate opens → the
+  dashboard is republished.
+* state write fails → warning, exit 0 → the next run sees a stale fingerprint
+  and republishes.
+
+So a permissions problem costs a redundant republish, never a stale dashboard —
+the same behaviour the pipeline had before the wrapper existed.
+
+To inspect the recorded state:
+
+```sql
+SELECT started_at, rows_written, JSON_VALUE(extra, '$.fingerprint') AS fingerprint
+FROM `americanflat.observability.pipeline_runs`
+WHERE JSON_VALUE(extra, '$.dashboard') = 'yusen-invoices'
+ORDER BY started_at DESC
+LIMIT 10
+```
 
 ## Checking it by hand
 
 ```
-rm -rf /tmp/yusen-refresh \
-  && GIT_LFS_SKIP_SMUDGE=1 git clone --quiet --depth 1 \
-       -b claude/website-auto-refresh-efficiency-9x474j \
-       https://github.com/anthony-amf/americanflat-ops-director /tmp/yusen-refresh \
-  && cd /tmp/yusen-refresh && python3 refresh_artifact_dashboard.py --check-only
+git clone --quiet --depth 1 -b claude/invoice-dashboard-missing-data-axicr7 \
+  https://github.com/americanflat/Ops /tmp/ops && \
+  python3 /tmp/ops/tools/yusen_dashboard_refresh.py run
 ```
 
 Compare against BigQuery directly:
 
-```
+```sql
 SELECT MAX(date) AS max_date, COUNT(*) AS n
 FROM `americanflat.finance.yusen_invoices`
 ```
