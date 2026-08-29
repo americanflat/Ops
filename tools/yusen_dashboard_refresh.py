@@ -52,9 +52,11 @@ Usage
 """
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -146,19 +148,48 @@ def write_state(state: dict) -> None:
 # commands
 # --------------------------------------------------------------------------
 
+def clone_source(attempts: int = 3) -> int:
+    """Clone the refresh repo, retrying a failed clone.
+
+    This clone fails intermittently in scheduled sessions — roughly half of
+    them on 2026-08-28, while succeeding every time from an interactive
+    session. A failed clone exits Step 1 in about a minute and the dashboard
+    silently does not republish, which is the same class of silent stall this
+    whole pipeline already had once. The cause is unidentified (a scheduled
+    session's stdout is not readable from elsewhere), so this retries rather
+    than diagnoses.
+    """
+    delay = 5
+    for attempt in range(1, attempts + 1):
+        if DIRECTOR.exists():
+            shutil.rmtree(DIRECTOR)
+        clone = subprocess.run(
+            ["git", "clone", "--quiet", "--depth", "1", "-b", SOURCE_BRANCH,
+             SOURCE_REPO, str(DIRECTOR)],
+            capture_output=True, text=True,
+            env={**os.environ, "GIT_LFS_SKIP_SMUDGE": "1"},
+        )
+        if clone.returncode == 0:
+            if attempt > 1:
+                print(f"  clone succeeded on attempt {attempt}")
+            return 0
+        print(f"  clone attempt {attempt}/{attempts} failed "
+              f"(rc={clone.returncode}): {clone.stderr.strip()[:200]}")
+        if attempt < attempts:
+            time.sleep(delay)
+            delay *= 3
+    sys.stderr.write(f"could not clone {SOURCE_REPO} after {attempts} attempts\n")
+    return 1
+
+
 def cmd_run() -> int:
     if WORK.exists():
         shutil.rmtree(WORK)
     WORK.mkdir(parents=True)
 
-    clone = subprocess.run(
-        ["git", "clone", "--quiet", "--depth", "1", "-b", SOURCE_BRANCH,
-         SOURCE_REPO, str(DIRECTOR)],
-        capture_output=True, text=True,
-    )
-    if clone.returncode != 0:
-        sys.stderr.write(clone.stderr)
-        return clone.returncode
+    rc = clone_source()
+    if rc != 0:
+        return rc
 
     # Seed the upstream script's state file from BigQuery. On any failure we
     # leave it absent, which makes the gate open and forces a republish.

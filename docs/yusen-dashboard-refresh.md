@@ -56,28 +56,37 @@ because the session finished cleanly; the prompt told it to report the error and
 stop, which it did. **Never treat a green Routine as evidence the dashboard was
 republished — check the artifact's version timestamp.**
 
-## Which branch the Routines clone
+## Which branch the Routines clone, and the intermittent Step 1 failure
 
 Step 1 of both Routines clones `main`, verifies `tools/yusen_dashboard_refresh.py`
-actually arrived, and falls back to `claude/invoice-dashboard-missing-data-axicr7`
-if it did not. It echoes a `SOURCE:` line naming the branch and commit it used.
+actually arrived, falls back to `claude/invoice-dashboard-missing-data-axicr7`
+if it did not, and echoes a `SOURCE:` line naming the branch and commit used.
 
-The fallback is not decoration. After `main` was fast-forwarded to carry this
-tool (2026-08-28), two Routine runs cloning `main` failed to publish, while runs
-cloning the pre-merge branch published fine — the branch was the only variable.
-The leading theory is that those sessions' git proxy served a stale `main`
-(still the README-only initial commit), so the `python3 .../tools/...` call died
-immediately; that matches the ~60s, ~2k-output-token signature of the failures.
-It was never confirmed, because a Routine session's stdout is not readable from
-another session.
+**Step 1 fails intermittently in scheduled sessions.** On 2026-08-28, with one
+identical prompt, three runs went: published (96s), no publish (57s), published
+(171s). A failing run exits in about a minute and republishes nothing while
+still reporting `ROUTINE_RUN_STATUS_SUCCEEDED`. The same commands succeed every
+time from an interactive session, and the refresh repo clones in about a second
+there, so the fault is specific to the scheduled environment and was never
+identified — a scheduled session's stdout cannot be read from elsewhere.
 
-Consequences:
+An earlier theory that `main` was the problem (two runs cloning `main` failed
+while runs cloning the branch succeeded) does not survive this: the same prompt
+both succeeds and fails. That was coincidence in a roughly 50/50 process.
 
-* **Do not delete `claude/invoice-dashboard-missing-data-axicr7`** until a
-  `SOURCE:` line in a run's reply reads `main`. It is a live fallback.
-* Keep that branch pointing at the same commit as `main`. Push to both.
-* Once `SOURCE:` reports `main`, the fallback is inert and can be removed
-  along with the branch.
+Mitigations in place:
+
+* `clone_source()` in the wrapper retries the refresh-repo clone three times
+  with 5s/15s backoff.
+* Step 1 in each prompt retries the Ops clone once.
+* The branch fallback stays until a `SOURCE:` line is seen reading `main`.
+
+**Do not delete `claude/invoice-dashboard-missing-data-axicr7`** — it is a live
+fallback, kept at the same commit as `main`. Push to both refs.
+
+If the dashboard stalls again, the first thing to check is whether Step 1 is
+failing: compare a run's duration (roughly 60s = failed early, roughly 170s =
+published) and look for an `artifacts` entry on the run's session.
 
 ## Where the fingerprint lives
 
