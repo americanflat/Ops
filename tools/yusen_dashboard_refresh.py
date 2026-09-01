@@ -55,8 +55,12 @@ Usage
 
     python3 yusen_dashboard_refresh.py verify --published <read-file>
         Independent proof the publish landed: re-derive the fingerprint of the
-        live page and compare it to what `run` rendered. Prints VERIFIED <fp>,
-        or MISMATCH and exits 1. Pass a *fresh* read taken after the publish.
+        live page and compare it to what `run` rendered. Pass a *fresh* read
+        taken after the publish. Exit status distinguishes the two failures
+        this pipeline has always confused:
+            VERIFIED <fp>       exit 0 — the live page carries what we rendered
+            MISMATCH ...        exit 1 — the publish did not land
+            UNVERIFIED ...      exit 2 — could not check; says nothing either way
 
 Fail-open
 ---------
@@ -239,8 +243,11 @@ def cmd_verify(published: str | None, expect: str | None) -> int:
             return 1
     live, why = live_fingerprint(published)
     if live is None:
-        sys.stderr.write(f"MISMATCH could not read the live page ({why})\n")
-        return 1
+        # Not the same thing as a failed publish, and must not be reported as
+        # one — this pipeline's whole history is false alarms and silent stalls
+        # being mistaken for each other.
+        sys.stderr.write(f"UNVERIFIED could not read the live page ({why})\n")
+        return 2
     if live != expect:
         sys.stderr.write(f"MISMATCH live={live} rendered={expect}\n")
         sys.stderr.write("the publish did not land — the artifact still shows "
