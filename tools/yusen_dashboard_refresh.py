@@ -1,147 +1,153 @@
 #!/usr/bin/env python3
-"""Run the Yusen Invoices dashboard refresh with BigQuery-backed state.
+"""Run the Yusen Invoices dashboard refresh, gated on the live artifact.
 
 Background
 ----------
 The refresh itself lives in `refresh_artifact_dashboard.py` in
-anthony-amf/americanflat-ops-director. That script gates the republish on a
-fingerprint of the rendered data, and it records the last published fingerprint
-in a local `.dashboard-state.json` which it expects the caller to commit and
-push back to the repo.
+anthony-amf/americanflat-ops-director. It renders the artifact HTML from
+`americanflat.finance.yusen_invoices` and gates the republish on a fingerprint
+of the rendered rows, comparing against a fingerprint the *caller* has to store
+and hand back via `--state`.
 
-That push never worked from the scheduled sessions — they only have anonymous
-read on that repo — so the state was permanently stuck at its 2026-08-07 value,
-the gate always saw a stale fingerprint, and every run republished identical
-data. See docs/yusen-dashboard-refresh.md.
+Storing that fingerprint is the part that has never worked:
 
-This wrapper moves the state somewhere the scheduled sessions *can* write:
-`americanflat.observability.pipeline_runs`, reached over the same
-proxy-injected BigQuery credentials the refresh already uses. No git push, no
-new credentials, and no DDL — that table already exists, and its `extra` JSON
-column carries the fingerprint. (A dedicated `finance.dashboard_state` table
-was the first choice but `bigquery.tables.create` is denied on that dataset.)
+  * `.dashboard-state.json` in the upstream repo — the scheduled sessions only
+    have anonymous read there, so the push never landed and the state froze at
+    its 2026-08-07 value.
+  * `americanflat.observability.pipeline_runs` — the warehouse credential these
+    sessions use cannot write it (HTTP 403, still denied as of 2026-09-01), and
+    `bigquery.tables.create` is denied on `finance`, so there was nowhere else
+    to put it. That table is empty; nothing has ever been recorded in it.
 
-The upstream script is not modified. It takes `--state <path>`; we hand it a
-file seeded from BigQuery on the way in, and publish what it wrote back to
-BigQuery on the way out.
+This wrapper drops the external store entirely. **The live artifact is the
+state.** The rendered page carries every row it displays in a `const DATA`
+literal, so the fingerprint of what is currently published can be recovered
+from the published page itself — which the calling session already has to read
+before it may publish (an unread artifact refuses the publish as a conflict).
+No credentials, no table, no git push, and nothing to fall out of sync.
 
-Fail-open
----------
-Every BigQuery interaction here degrades to "republish anyway":
+Churn normalization
+-------------------
+A raw fingerprint of the rows can never be stable, which is the second reason
+the gate never closed. The nightly validation Routine re-stamps
+`validation_report` with a fresh `[AUTO <today>]` block and bumps `validated_at`
+to today on ~76 invoices every night, whether or not any finding changed. On
+2026-09-01 that accounted for **all 76** differences between the live page and
+a fresh render — every one of them a date string, with no change to a status,
+an amount, a verdict or a document link.
 
-  * state read fails or finds nothing -> no seed file -> upstream sees no
-    previous fingerprint -> CHANGED -> the dashboard is republished.
-  * state write fails -> warn, exit 0 -> the next run sees a stale fingerprint
-    and republishes.
-
-The failure mode is a redundant republish, never a stale dashboard. That is the
-same behaviour the pipeline had before this wrapper existed, so a permissions
-problem here can only cost efficiency, not correctness.
+So the fingerprint here normalizes that churn away: `validated_at` is dropped,
+and a `[TAG YYYY-MM-DD]` stamp inside a report is reduced to `[TAG]`. A genuinely
+new block still changes the text beyond its date, and a real change to a status,
+amount, payment or link still changes the row, so both still republish.
 
 Usage
 -----
-    python3 yusen_dashboard_refresh.py run
-        Clone the refresh repo, seed state from BigQuery, run the refresh.
-        Prints the upstream's contract line last:
-            NO_CHANGE <fp>          nothing to do
+    python3 yusen_dashboard_refresh.py run --published <read-file>
+        Clone the refresh repo, render, and compare against the live page.
+        <read-file> is the local file the Artifact tool's `read` action saves.
+        Prints the contract line last:
+            NO_CHANGE <fp>          the live page already shows this data
             CHANGED <path> <fp>     publish <path> to the artifact
 
-    python3 yusen_dashboard_refresh.py record
-        Record the just-published fingerprint in BigQuery. Run this only
-        after the Artifact publish actually succeeded.
+        Omit --published (or hand it something unreadable) and the run
+        fails open with CHANGED — a redundant republish, never a stale page.
+
+    python3 yusen_dashboard_refresh.py verify --published <read-file>
+        Independent proof the publish landed: re-derive the fingerprint of the
+        live page and compare it to what `run` rendered. Pass a *fresh* read
+        taken after the publish. Exit status distinguishes the two failures
+        this pipeline has always confused:
+            VERIFIED <fp>       exit 0 — the live page carries what we rendered
+            MISMATCH ...        exit 1 — the publish did not land
+            UNVERIFIED ...      exit 2 — could not check; says nothing either way
+
+Fail-open
+---------
+Anything this wrapper cannot determine resolves to "republish anyway". The
+failure mode is a redundant republish, never a stale dashboard.
 """
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import time
-import urllib.error
-import urllib.request
 from pathlib import Path
-
-PROJECT = "americanflat"
-STATE_TABLE = "americanflat.observability.pipeline_runs"
-DASHBOARD = "yusen-invoices"
 
 SOURCE_REPO = "https://github.com/anthony-amf/americanflat-ops-director"
 SOURCE_BRANCH = "claude/website-auto-refresh-efficiency-9x474j"
 
 WORK = Path("/tmp/yusen-refresh")
 DIRECTOR = WORK / "director"
-STATE = WORK / "state.json"
 OUT = WORK / "yusen_invoices_artifact.html"
+RENDERED_FP = WORK / "rendered.fp"
+
+DATA_MARKER = "const DATA = "
+
+# `[AUTO 2026-09-01]`, `[STEDI 2026-08-31]`, `[VAS SWEEP 2026-08-05]` — the date
+# a check ran is not a finding, and the validator rewrites it nightly.
+STAMP_DATE = re.compile(r"\[([A-Z][A-Z /]*) \d{4}-\d{2}-\d{2}\]")
 
 
-def bq(sql: str) -> dict:
-    """Run one query against BigQuery over the proxy-injected credentials."""
-    req = urllib.request.Request(
-        f"https://bigquery.googleapis.com/bigquery/v2/projects/{PROJECT}/queries",
-        data=json.dumps({"query": sql, "useLegacySql": False,
-                         "timeoutMs": 60000}).encode(),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=120) as resp:
-        out = json.loads(resp.read())
-    if "error" in out:
-        raise RuntimeError(out["error"].get("message", "unknown BigQuery error"))
+# --------------------------------------------------------------------------
+# fingerprinting
+# --------------------------------------------------------------------------
+
+def upstream_fingerprint():
+    """The upstream's own hash function, imported rather than reimplemented.
+
+    Keeps this wrapper's fingerprints and the upstream's identical in method,
+    so the two can never drift apart. Import is safe: that module does its work
+    under `if __name__ == "__main__"`.
+    """
+    sys.path.insert(0, str(DIRECTOR))
+    import refresh_artifact_dashboard as upstream
+    return upstream.fingerprint
+
+
+def rows_of_page(path: Path) -> list:
+    """The rows a rendered dashboard page displays, from its `const DATA`."""
+    text = path.read_text(errors="replace")
+    at = text.find(DATA_MARKER)
+    if at < 0:
+        raise ValueError(f"no {DATA_MARKER!r} literal in {path}")
+    rows, _ = json.JSONDecoder().raw_decode(text, at + len(DATA_MARKER))
+    if not isinstance(rows, list) or not rows:
+        raise ValueError(f"{DATA_MARKER!r} in {path} is not a non-empty list")
+    return rows
+
+
+def normalize(rows: list) -> list:
+    """Strip the nightly validator's date churn; keep every real field."""
+    out = []
+    for row in rows:
+        row = dict(row)
+        row.pop("validated_at", None)
+        report = row.get("validation_report")
+        if isinstance(report, str):
+            row["validation_report"] = STAMP_DATE.sub(r"[\1]", report)
+        out.append(row)
     return out
 
 
-def sql_str(value: str) -> str:
-    """Quote a Python string as a BigQuery string literal."""
-    return "'" + str(value).replace("\\", "\\\\").replace("'", "\\'") + "'"
+def page_fingerprint(path: Path) -> str:
+    return upstream_fingerprint()(normalize(rows_of_page(path)))
 
 
-# --------------------------------------------------------------------------
-# state
-# --------------------------------------------------------------------------
-
-def read_state() -> dict | None:
-    """Most recent published state for this dashboard, or None."""
-    rows = bq(f"""
-        SELECT JSON_VALUE(extra, '$.fingerprint') AS fingerprint,
-               rows_written
-        FROM `{STATE_TABLE}`
-        WHERE JSON_VALUE(extra, '$.dashboard') = {sql_str(DASHBOARD)}
-          AND status = 'published'
-        ORDER BY started_at DESC
-        LIMIT 1
-    """).get("rows", [])
-    if not rows:
-        return None
-    cells = rows[0]["f"]
-    fingerprint = cells[0].get("v")
-    if not fingerprint:
-        return None
-    written = cells[1].get("v")
-    return {"fingerprint": fingerprint,
-            "rows": int(written) if written is not None else 0}
-
-
-def write_state(state: dict) -> None:
-    """Append this publish to the pipeline-run log."""
-    fingerprint = state["fingerprint"]
-    extra = json.dumps({
-        "dashboard": DASHBOARD,
-        "fingerprint": fingerprint,
-        "paid": state.get("paid", 0),
-        "artifact_url": state.get("artifact_url", ""),
-    })
-    bq(f"""
-        INSERT INTO `{STATE_TABLE}`
-          (run_id, repo, started_at, ended_at, status, rows_written, extra)
-        VALUES (
-          CONCAT('yusen-dashboard-refresh-',
-                 FORMAT_TIMESTAMP('%Y%m%dT%H%M%SZ', CURRENT_TIMESTAMP())),
-          'anthony-amf/americanflat-ops-director',
-          CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP(), 'published',
-          {int(state.get("rows", 0))},
-          PARSE_JSON({sql_str(extra)})
-        )
-    """)
+def live_fingerprint(published: str | None) -> tuple[str | None, str]:
+    """Fingerprint of the currently-published page, plus why if unavailable."""
+    if not published:
+        return None, "no --published file given"
+    path = Path(published)
+    if not path.is_file():
+        return None, f"{path} does not exist"
+    try:
+        return page_fingerprint(path), ""
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        return None, str(exc)
 
 
 # --------------------------------------------------------------------------
@@ -149,16 +155,7 @@ def write_state(state: dict) -> None:
 # --------------------------------------------------------------------------
 
 def clone_source(attempts: int = 3) -> int:
-    """Clone the refresh repo, retrying a failed clone.
-
-    This clone fails intermittently in scheduled sessions — roughly half of
-    them on 2026-08-28, while succeeding every time from an interactive
-    session. A failed clone exits Step 1 in about a minute and the dashboard
-    silently does not republish, which is the same class of silent stall this
-    whole pipeline already had once. The cause is unidentified (a scheduled
-    session's stdout is not readable from elsewhere), so this retries rather
-    than diagnoses.
-    """
+    """Clone the refresh repo, retrying a failed clone."""
     delay = 5
     for attempt in range(1, attempts + 1):
         if DIRECTOR.exists():
@@ -182,7 +179,7 @@ def clone_source(attempts: int = 3) -> int:
     return 1
 
 
-def cmd_run() -> int:
+def cmd_run(published: str | None) -> int:
     if WORK.exists():
         shutil.rmtree(WORK)
     WORK.mkdir(parents=True)
@@ -191,55 +188,87 @@ def cmd_run() -> int:
     if rc != 0:
         return rc
 
-    # Seed the upstream script's state file from BigQuery. On any failure we
-    # leave it absent, which makes the gate open and forces a republish.
-    try:
-        previous = read_state()
-    except (urllib.error.URLError, urllib.error.HTTPError, RuntimeError, KeyError) as exc:
-        print(f"  state read failed ({exc}); treating as no previous publish")
-        previous = None
-    if previous:
-        STATE.write_text(json.dumps(previous) + "\n")
-        print(f"  last published fingerprint {previous['fingerprint']} "
-              f"({previous['rows']} rows) from BigQuery")
-    else:
-        print("  no previous publish on record; the refresh will republish")
-
+    # Render unconditionally. The upstream's own gate needs a state file this
+    # environment cannot keep, so --force renders every time and the comparison
+    # below decides. --state points at a throwaway path so the upstream never
+    # writes into its own checkout.
     refresh = subprocess.run(
-        [sys.executable, "refresh_artifact_dashboard.py",
-         "--state", str(STATE), "--out", str(OUT)],
+        [sys.executable, "refresh_artifact_dashboard.py", "--force",
+         "--state", str(WORK / "upstream-state.json"), "--out", str(OUT)],
         cwd=DIRECTOR, capture_output=True, text=True,
     )
     sys.stderr.write(refresh.stderr)
-    sys.stdout.write(refresh.stdout)
-    return refresh.returncode
+    # Drop the upstream's own verdict and fingerprint lines: they would be a
+    # second, conflicting answer on the last line of stdout, and its raw
+    # fingerprint is not the churn-normalized one this wrapper gates on.
+    for line in refresh.stdout.splitlines():
+        if not line.startswith(("CHANGED ", "NO_CHANGE ", "  fingerprint ")):
+            print(line)
+    if refresh.returncode != 0:
+        sys.stderr.write(f"refresh failed (rc={refresh.returncode})\n")
+        return refresh.returncode
+    if not OUT.is_file():
+        sys.stderr.write(f"refresh reported success but {OUT} is missing\n")
+        return 1
+
+    try:
+        rendered = page_fingerprint(OUT)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        # A page we cannot fingerprint is a broken render, not a gate question.
+        sys.stderr.write(f"cannot fingerprint the rendered page: {exc}\n")
+        return 1
+    RENDERED_FP.write_text(rendered + "\n")
+
+    live, why = live_fingerprint(published)
+    if live is None:
+        print(f"  live fingerprint unavailable ({why}); republishing to be safe")
+        print(f"CHANGED {OUT} {rendered}")
+        return 0
+
+    print(f"  live page {live} · rendered {rendered}")
+    if live == rendered:
+        print(f"NO_CHANGE {rendered}")
+    else:
+        print(f"CHANGED {OUT} {rendered}")
+    return 0
 
 
-def cmd_record() -> int:
-    try:
-        state = json.loads(STATE.read_text())
-    except (FileNotFoundError, json.JSONDecodeError) as exc:
-        print(f"  no state file to record ({exc}) — nothing written")
-        return 0
-    try:
-        write_state(state)
-    except (urllib.error.URLError, urllib.error.HTTPError, RuntimeError, KeyError) as exc:
-        # Never fail the run over this. The publish already happened; the only
-        # cost is that the next run cannot skip and will republish.
-        print(f"  WARNING: could not record state in BigQuery ({exc})")
-        print("  the dashboard is published; the next run will republish")
-        return 0
-    print(f"  recorded fingerprint {state['fingerprint']} "
-          f"({state.get('rows', 0)} rows) in {STATE_TABLE}")
+def cmd_verify(published: str | None, expect: str | None) -> int:
+    if expect is None:
+        try:
+            expect = RENDERED_FP.read_text().strip()
+        except OSError as exc:
+            sys.stderr.write(f"no rendered fingerprint to verify against ({exc}); "
+                             f"run `run` first or pass --expect\n")
+            return 1
+    live, why = live_fingerprint(published)
+    if live is None:
+        # Not the same thing as a failed publish, and must not be reported as
+        # one — this pipeline's whole history is false alarms and silent stalls
+        # being mistaken for each other.
+        sys.stderr.write(f"UNVERIFIED could not read the live page ({why})\n")
+        return 2
+    if live != expect:
+        sys.stderr.write(f"MISMATCH live={live} rendered={expect}\n")
+        sys.stderr.write("the publish did not land — the artifact still shows "
+                         "older data\n")
+        return 1
+    print(f"VERIFIED {live}")
     return 0
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("command", choices=["run", "record"])
+    ap.add_argument("command", choices=["run", "verify"])
+    ap.add_argument("--published", metavar="PATH",
+                    help="local file saved by the Artifact tool's read action")
+    ap.add_argument("--expect", metavar="FP",
+                    help="verify against this fingerprint instead of the last render")
     args = ap.parse_args()
-    return cmd_run() if args.command == "run" else cmd_record()
+    if args.command == "run":
+        return cmd_run(args.published)
+    return cmd_verify(args.published, args.expect)
 
 
 if __name__ == "__main__":

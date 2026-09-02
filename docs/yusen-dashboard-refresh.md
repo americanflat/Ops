@@ -10,165 +10,145 @@ time, so it only changes when something republishes it.
 
 Two scheduled Routines republish it on weekdays:
 
-| Routine | Cron (UTC) |
+| Routine | Cron (UTC) | Trigger ID |
+| --- | --- | --- |
+| `refresh-yusen-artifact-830am-330pm` | `30 12,19 * * 1-5` | `trig_01YG7tbcgDnpBRKkxo1KDHok` |
+| `refresh-yusen-artifact-noon-6pm` | `0 16,22 * * 1-5` | `trig_01PrPh79KQSXtmK2fK9MBBVr` |
+
+Each firing:
+
+1. **reads** the live artifact with the Artifact tool (`action: "read"`),
+2. clones `americanflat/Ops` and runs
+   `tools/yusen_dashboard_refresh.py run --published <the read file>`,
+3. **publishes** the rendered HTML back to the artifact URL on `CHANGED`,
+4. **re-reads** and runs `verify --published <fresh read file>`, which must
+   print `VERIFIED <fp>`.
+
+Step 1 is mandatory for two reasons: a publish from a session that has never
+read the artifact is refused as a conflict, and the file that read saves *is*
+the pipeline's state (see below). Passing `url:` to the publish is also
+mandatory — without it the run mints a duplicate artifact and the real
+dashboard goes stale silently.
+
+Step 4 is the only thing that distinguishes "published" from "reported
+published". Never treat a green Routine, or a session's own summary, as
+evidence the dashboard was republished.
+
+## The live artifact is the state
+
+`refresh_artifact_dashboard.py` (upstream, in
+`anthony-amf/americanflat-ops-director`) gates the republish on a fingerprint of
+the rendered rows and expects the caller to persist that fingerprint via
+`--state`. Persisting it is the part that never worked:
+
+| Store | Outcome |
 | --- | --- |
-| `refresh-yusen-artifact-830am-330pm` | `30 12,19 * * 1-5` |
-| `refresh-yusen-artifact-noon-6pm` | `0 16,22 * * 1-5` |
+| `.dashboard-state.json` in the upstream repo | scheduled sessions have anonymous read only; the push never landed and state froze at 2026-08-07 |
+| `americanflat.observability.pipeline_runs` | write denied, HTTP 403, still denied 2026-09-01; the table is **empty** — nothing was ever recorded |
+| a new `finance.dashboard_state` table | `bigquery.tables.create` denied on that dataset |
 
-Each one clones `anthony-amf/americanflat-ops-director`
-(branch `claude/website-auto-refresh-efficiency-9x474j`) and runs
-`refresh_artifact_dashboard.py`. That script selects every row of
-`americanflat.finance.yusen_invoices`, fingerprints the rendered fields, and
-prints either `NO_CHANGE <fp>` or `CHANGED <path> <fp>`. On `CHANGED` the
-session publishes the rendered HTML back to the artifact URL above.
+So the wrapper stores nothing. The rendered page carries every row it displays
+in a `const DATA` literal, so the fingerprint of what is *currently published*
+is recovered from the published page itself — and the session already has to
+read that page before it may publish. No credentials, no table, no git push,
+and no state that can drift from reality.
 
-Passing `url:` to the Artifact tool is mandatory. Without it the run mints a
-duplicate artifact and the real dashboard goes stale silently.
+This removed the outstanding ask for a `bigquery.tables.updateData` grant on
+`observability`. Nothing in this pipeline needs it.
 
-## Outage 2026-08-21 → 2026-08-28
+## Why the gate never closed (2026-09-01)
 
-The dashboard froze with data through 2026-08-20 while BigQuery went on to
-2026-08-26 — four invoices missing (757556, 757557, 757680, 757696).
+Two independent faults, both fixed:
 
-**Cause.** Both Routines began with `cd /home/user/americanflat-ops-director`.
-Environment `env_01VYuZvJjeBFovELdTWzcubw` is sourced from `americanflat/Ops`,
-which clones to `/home/user/Ops`, so that directory does not exist. The `&&`
-chain short-circuited on the failed `cd` and the refresh script never ran.
+**1. No state at all.** Per the table above, every run saw "no previous
+publish", so the gate always opened and every firing republished — four
+redundant agent sessions per weekday.
 
-**Why it looked healthy.** The Routines kept reporting
-`ROUTINE_RUN_STATUS_SUCCEEDED`. That status only means the session finished
-cleanly — and the prompt told it to report the error and stop, which it did.
-A green Routine is not evidence the dashboard was republished.
+**2. The fingerprint could never be stable anyway.** The nightly validation
+Routine rewrites `validation_report` with a fresh `[AUTO <today>]` block and
+bumps `validated_at` to today on ~76 invoices every night, whether or not any
+finding changed. On 2026-09-01, comparing the live page against a fresh render:
+359 rows each, 76 rows differing, and **every single difference was a date
+string** — no change to a status, an amount, a verdict or a document link. A
+raw fingerprint therefore changes every night by construction, so even with a
+working state store the gate would have opened daily.
 
-**Fix.** Step 1 of both prompts now clones a fresh checkout instead of assuming
-a pre-existing directory, so the job no longer depends on how the environment's
-sources are configured.
+The wrapper now normalizes that churn before hashing: `validated_at` is
+dropped, and a `[TAG YYYY-MM-DD]` stamp inside a report is reduced to `[TAG]`.
+A genuinely new block still changes the text beyond its date, and any real
+change to a status, amount, payment or link still changes the row — so real
+changes still republish. Verified on 2026-09-01: normalized live and rendered
+fingerprints matched exactly (`b122b16c27fc2742`), correctly yielding
+`NO_CHANGE`.
 
-**Second fault — the publish itself.** Fixing the path was not enough. The next
-two runs completed, reported SUCCEEDED, and still produced no new artifact
-version. The cause: a publish from a session that has never *read* the artifact
-is refused as a conflict, and these sessions only ever published. Both prompts
-now call the Artifact tool with `action: "read"` before publishing. Verified
-2026-08-28 16:28:35Z — a fired run published for the first time since Aug 21.
+If you change what the dashboard displays, check whether the new field churns
+daily. A volatile field inside the fingerprint silently reinstates fault 2.
 
-Neither fault announced itself. Both runs reported `ROUTINE_RUN_STATUS_SUCCEEDED`
-because the session finished cleanly; the prompt told it to report the error and
-stop, which it did. **Never treat a green Routine as evidence the dashboard was
-republished — check the artifact's version timestamp.**
+## Corrections to the earlier diagnosis
 
-## Which branch the Routines clone, and the intermittent Step 1 failure
+Two theories recorded here previously were wrong, and both cost time:
 
-Step 1 of both Routines clones `main`, verifies `tools/yusen_dashboard_refresh.py`
-actually arrived, falls back to `claude/invoice-dashboard-missing-data-axicr7`
-if it did not, and echoes a `SOURCE:` line naming the branch and commit used.
+* **"Step 1 fails intermittently; a run of about 60s failed early and about
+  170s published."** Step 1 takes **4 seconds** end to end (the upstream clone
+  is about 1s). Run duration says nothing about whether a publish happened. The
+  48s run on 2026-09-01 and the 35s run on 2026-08-31 both published —
+  confirmed by the `artifacts.updated_at` entry on each run's session
+  (`2026-09-01T12:54:58Z`, `2026-08-31T22:10:16Z`).
+* **"`main` may not carry the tool, so fall back to
+  `claude/invoice-dashboard-missing-data-axicr7`."** `main` carries it. All the
+  fallback ever proved was that a stale local ref looks like a missing file.
+  The prompts keep one fallback clone, but it now guards a real condition —
+  whether the checkout carries the current `--published` flow — rather than a
+  guess about which branch is good.
 
-**Step 1 fails intermittently in scheduled sessions.** On 2026-08-28, with one
-identical prompt, three runs went: published (96s), no publish (57s), published
-(171s). A failing run exits in about a minute and republishes nothing while
-still reporting `ROUTINE_RUN_STATUS_SUCCEEDED`. The same commands succeed every
-time from an interactive session, and the refresh repo clones in about a second
-there, so the fault is specific to the scheduled environment and was never
-identified — a scheduled session's stdout cannot be read from elsewhere.
+The genuine silent-failure history is still worth knowing:
 
-An earlier theory that `main` was the problem (two runs cloning `main` failed
-while runs cloning the branch succeeded) does not survive this: the same prompt
-both succeeds and fails. That was coincidence in a roughly 50/50 process.
+* **2026-08-21 → 08-28.** Both prompts began with `cd
+  /home/user/americanflat-ops-director`. Environment
+  `env_01VYuZvJjeBFovELdTWzcubw` is sourced from `americanflat/Ops`, which
+  clones to `/home/user/Ops`, so the directory did not exist, the `&&` chain
+  short-circuited, and the refresh never ran. The prompts now clone a fresh
+  checkout instead of assuming a directory.
+* **The publish conflict.** Fixing the path was not enough: a publish from a
+  session that has never *read* the artifact is refused, and those sessions only
+  ever published. The read is now Step 1, and it also carries the state.
 
-Mitigations in place:
+Both faults reported `ROUTINE_RUN_STATUS_SUCCEEDED` throughout, because the
+session finished cleanly — the prompt told it to report the error and stop, and
+it did. That is what Step 4's `verify` exists to catch.
 
-* `clone_source()` in the wrapper retries the refresh-repo clone three times
-  with 5s/15s backoff.
-* Step 1 in each prompt retries the Ops clone once.
-* The branch fallback stays until a `SOURCE:` line is seen reading `main`.
+## Not fixed here: the staleness alarm lies
 
-**Do not delete `claude/invoice-dashboard-missing-data-axicr7`** — it is a live
-fallback, kept at the same commit as `main`. Push to both refs.
+A Slack app (**Invoice Bot**, bot user `U0BCWBLLAQM`) DMs Anthony at 08:00 and
+17:15 MT with `⚠️ Yusen dashboard is stale — last successful publish was N hours
+ago`. Its N increases monotonically (186h → 219h → 234h → 243h across Aug 29–31),
+i.e. the timestamp it reads is **frozen** around 2026-08-21 and has not advanced
+since — while the artifact itself was demonstrably republished on Aug 28, Aug 31
+and Sep 1.
 
-If the dashboard stalls again, the first thing to check is whether Step 1 is
-failing: compare a run's duration (roughly 60s = failed early, roughly 170s =
-published) and look for an `artifacts` entry on the run's session.
-
-## Where the fingerprint lives
-
-`refresh_artifact_dashboard.py` gates the republish on a fingerprint of the
-rendered data, and records the last published fingerprint via `--state <path>`.
-It originally wrote that to `.dashboard-state.json` in its own repo and expected
-the caller to commit and push it back.
-
-That push never worked. The scheduled sessions only have anonymous read on
-`anthony-amf/americanflat-ops-director`, so the state froze at its 2026-08-07
-value, the gate always saw a stale fingerprint, and every run republished
-identical data — defeating the whole point of the gate.
-
-State now lives in BigQuery instead, in
-`americanflat.observability.pipeline_runs`, reached over the same
-proxy-injected credentials the refresh already uses. One row per publish, with
-the fingerprint in the existing `extra` JSON column. No git push, no new
-credentials, and no DDL. (A dedicated `finance.dashboard_state` table was the
-first choice, but `bigquery.tables.create` is denied on that dataset.)
-
-`tools/yusen_dashboard_refresh.py` in this repo is the wrapper that does it:
-
-* `run` — clone the refresh repo, seed the upstream state file from BigQuery,
-  run the refresh, and print the upstream's `NO_CHANGE` / `CHANGED` line.
-* `record` — append the just-published fingerprint to `pipeline_runs`. Run it
-  only after the Artifact publish actually succeeded.
-
-The upstream script is untouched; the wrapper only swaps the state backend via
-its existing `--state` flag. Nothing is duplicated between the two repos.
-
-### Fail-open
-
-Every BigQuery interaction in the wrapper degrades to "republish anyway":
-
-* state read fails or finds nothing → no seed file → the gate opens → the
-  dashboard is republished.
-* state write fails → warning, exit 0 → the next run sees a stale fingerprint
-  and republishes.
-
-So a permissions problem costs a redundant republish, never a stale dashboard —
-the same behaviour the pipeline had before the wrapper existed.
-
-### Not yet working: the write is denied
-
-As of 2026-08-28 the state write does **not** land. The warehouse credential
-these sessions use can read everything, and can run DML against `finance`, but:
-
-| Operation | Result |
-| --- | --- |
-| `bigquery.tables.updateData` on `observability.pipeline_runs` | DENIED |
-| `bigquery.tables.create` on `finance` | DENIED |
-| DML on existing `finance` tables (e.g. `yusen_invoices`) | allowed |
-
-`finance` holds only `freight_invoices`, `vendor_payment_invoices`,
-`vendor_payments` and `yusen_invoices` — none of them a sane home for dashboard
-state — so there is currently nowhere the state can be written.
-
-The gate therefore still fails open on every run: `record` prints a WARNING,
-exits 0, and the next run republishes. That is the pre-existing behaviour, so
-nothing regressed, but the redundant republishes continue.
-
-Smallest fix: grant `bigquery.tables.updateData` (or `roles/bigquery.dataEditor`)
-on the `observability` dataset. No code change — the wrapper starts working the
-moment the grant lands. Alternative: grant `bigquery.tables.create` on `finance`
-and give the state its own table there.
-
-To inspect the recorded state:
-
-```sql
-SELECT started_at, rows_written, JSON_VALUE(extra, '$.fingerprint') AS fingerprint
-FROM `americanflat.observability.pipeline_runs`
-WHERE JSON_VALUE(extra, '$.dashboard') = 'yusen-invoices'
-ORDER BY started_at DESC
-LIMIT 10
-```
+Whatever it reads, it is not `observability.pipeline_runs` (that table is empty,
+so it would have no timestamp at all) and not the artifact's own version. That
+bot's code is in neither `americanflat/Ops` nor
+`anthony-amf/americanflat-ops-director`; it could not be located from a session,
+so its alerts are currently false alarms and should not be treated as evidence.
+Fixing it means finding where it is deployed and pointing it at the artifact's
+real version timestamp.
 
 ## Checking it by hand
 
+Take a fresh read of the artifact (Artifact tool, `action: "read"`, the artifact
+URL) and note the file it saves, then:
+
 ```
-git clone --quiet --depth 1 -b claude/invoice-dashboard-missing-data-axicr7 \
-  https://github.com/americanflat/Ops /tmp/ops && \
-  python3 /tmp/ops/tools/yusen_dashboard_refresh.py run
+git clone --quiet --depth 1 -b main https://github.com/americanflat/Ops /tmp/ops
+python3 /tmp/ops/tools/yusen_dashboard_refresh.py run --published <read file>
+```
+
+`NO_CHANGE <fp>` means the live page already shows current data. `CHANGED <path>
+<fp>` means publish `<path>` to the artifact URL, then re-read and:
+
+```
+python3 /tmp/ops/tools/yusen_dashboard_refresh.py verify --published <fresh read file>
 ```
 
 Compare against BigQuery directly:
