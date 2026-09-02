@@ -117,6 +117,47 @@ Both faults reported `ROUTINE_RUN_STATUS_SUCCEEDED` throughout, because the
 session finished cleanly — the prompt told it to report the error and stop, and
 it did. That is what Step 4's `verify` exists to catch.
 
+## Still open: a green Routine that never published (2026-09-02)
+
+Checked by hand on 2026-09-02 at ~17:00 UTC. The live artifact was still the
+`2026-09-01T19:41:32Z` version and carried **364** rows against **368** in
+`finance.yusen_invoices` — four invoices missing:
+
+| date | invoice | warehouse | type | amount | ingested_at (UTC) |
+| --- | --- | --- | --- | --- | --- |
+| 2026-08-31 | `CA2WFS0003511-Storage` | Yusen CA | Storage | 4,781.03 | 2026-09-01 20:00:39 |
+| 2026-09-01 | `758161` | TS West (CA) | Storage | 23,812.42 | 2026-09-01 20:00:39 |
+| 2026-09-01 | `758231` | TS West (CA) | SMLPRCL/LTL | 10,686.92 | 2026-09-02 12:00:38 |
+| 2026-09-01 | `758233` | TS West (CA) | Receiving | 2,941.74 | 2026-09-02 12:00:38 |
+
+Five further rows (`758121`, and the four `FTI0006644-*` Yusen NL lines) had been
+validated to `needs_detail` in BigQuery after that publish and still showed
+blank on the page. No other field differed on the 364 shared rows once
+`validated_at` and `[TAG <date>]` stamps were normalized — so the churn
+normalization is working as documented; the gate was not the problem.
+
+Three firings should have caught this and none did. All three reported
+`ROUTINE_RUN_STATUS_SUCCEEDED`:
+
+| Routine | Fired (UTC) | Duration | Should have published |
+| --- | --- | --- | --- |
+| `refresh-yusen-artifact-noon-6pm` | 2026-09-01 22:00 | — | the two 20:00 rows |
+| `refresh-yusen-artifact-830am-330pm` | 2026-09-02 12:38:28 | 54s | those + the two 12:00 rows |
+| `refresh-yusen-artifact-noon-6pm` | 2026-09-02 16:10:15 | 69s | same |
+
+This is the same silent-failure shape as the 08-21 → 08-28 outage: the session
+finishes cleanly, the Routine goes green, and nothing is republished. Whatever
+Step 4's `verify` was supposed to catch, it did not surface here — either it was
+not reached or its result was not treated as fatal. **A green run on these two
+Routines is still not evidence of a publish.** Next step is to pull the
+transcripts of `cse_019CWqRtb3y8gmLeAi1b5tLk` and `cse_01GJYgya4Zx4i7c6Q9NorQgF`
+and find where each run stopped.
+
+The manual refresh recovered it: `run --published` printed
+`CHANGED ... 45b227e040634a07`, the publish went to the artifact URL, and a fresh
+read verified `VERIFIED 45b227e040634a07`. The live page now carries all 368 rows
+with zero field mismatches against BigQuery.
+
 ## Not fixed here: the staleness alarm lies
 
 A Slack app (**Invoice Bot**, bot user `U0BCWBLLAQM`) DMs Anthony at 08:00 and
