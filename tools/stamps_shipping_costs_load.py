@@ -380,7 +380,8 @@ def dedupe(rows: list, keep_last: bool = True) -> tuple:
     return list(keep.values()), dropped
 
 
-def cmd_prepare(paths: list, out_path: Path, ingested_at: str = None) -> int:
+def cmd_prepare(paths: list, out_path: Path, ingested_at: str = None,
+                report: dict = None) -> int:
     ingested_at = ingested_at or datetime.now(timezone.utc).isoformat()
     ingested_by = gcloud_account()
     everything = []
@@ -410,6 +411,8 @@ def cmd_prepare(paths: list, out_path: Path, ingested_at: str = None) -> int:
         # money moves. So say what the money did.
         kept_total, alt_total = total_of(everything), total_of(first_wins)
         delta = kept_total - alt_total
+        if report is not None:
+            report["order_delta"] = delta
         print(f"\n  cost with last occurrence kept   ${kept_total:,.2f}  <- loading this")
         print(f"  cost with first occurrence kept  ${alt_total:,.2f}")
         if delta:
@@ -437,7 +440,7 @@ def cmd_prepare(paths: list, out_path: Path, ingested_at: str = None) -> int:
     return 0
 
 
-def cmd_load(paths: list, cfg: dict) -> int:
+def cmd_load(paths: list, cfg: dict, accept_order: bool = False) -> int:
     require_sdk()
     table = f"{cfg['dataset']}.{cfg['table']}"
     fq_table = f"{cfg['project_id']}.{cfg['dataset']}.{cfg['table']}"
@@ -457,10 +460,47 @@ def cmd_load(paths: list, cfg: dict) -> int:
             print(f"\nCould not inspect {fq_table}:\n{combined.strip()}", file=sys.stderr)
         return 1
 
+    # A target still holding ="..."-escaped tracking numbers cannot be MERGEd
+    # into: this loader now writes clean values, the MERGE joins on the raw
+    # string, and every escaped label would INSERT a duplicate rather than
+    # update. That is exactly what happened on 2026-09-03 -- 5,420 duplicate
+    # rows and $61,913.11 of double-counted cost -- so refuse instead.
+    probe = run_bq(["query", "--use_legacy_sql=false", "--format=csv",
+                    f"SELECT COUNTIF(STARTS_WITH(tracking_number, '=')) AS n "
+                    f"FROM `{fq_table}`"], cfg)
+    if probe.returncode == 0:
+        lines = [l for l in (probe.stdout or "").strip().splitlines() if l]
+        escaped = lines[-1].strip() if len(lines) >= 2 else "0"
+        if escaped.isdigit() and int(escaped) > 0:
+            print(f"\nREFUSING TO LOAD: {escaped} rows in {fq_table} still carry\n"
+                  f"spreadsheet-escaped tracking numbers (=\"94...\").\n\n"
+                  f"This loader writes clean values and the MERGE matches on the raw\n"
+                  f"string, so those rows would not update - each would gain a\n"
+                  f"duplicate and double-count its cost.\n\n"
+                  f"Repair the table first:\n"
+                  f"  sql/stamps_repair_escaped_duplicates.sql  if duplicates already exist\n"
+                  f"  sql/stamps_unescape_backfill.sql           if they do not\n",
+                  file=sys.stderr)
+            return 1
+
     tmpdir = Path(tempfile.mkdtemp(prefix="stamps-load-"))
     ndjson = tmpdir / "rows.jsonl"
     run_ts = datetime.now(timezone.utc).isoformat()
-    if cmd_prepare(paths, ndjson, run_ts) != 0:
+    report = {}
+    if cmd_prepare(paths, ndjson, run_ts, report) != 0:
+        return 1
+
+    # (c) Warning was not enough. When file ordering decides real money, a load
+    #     needs an explicit decision rather than a message that scrolls past.
+    delta = report.get("order_delta")
+    if delta and not accept_order:
+        print(f"\nREFUSING TO LOAD: file order changes the total by ${abs(delta):,.2f}.\n\n"
+              f"The last occurrence of a tracking number wins, and a shell glob\n"
+              f"orders files alphabetically rather than by export date - so this\n"
+              f"load may be keeping stale amounts over post-audit ones.\n\n"
+              f"Either load only the export that covers the whole period, or, if\n"
+              f"the ordering above is genuinely what you want, re-run with\n"
+              f"--accept-file-order.\n", file=sys.stderr)
         return 1
 
     # Weekly exports restate labels the previous export already covered, and
@@ -521,9 +561,12 @@ def cmd_load(paths: list, cfg: dict) -> int:
     run_bq(["rm", "-f", "-t", stage], cfg)
 
     # The invariant that catches a double-count. One row per label, always.
-    # `rows` is reserved in BigQuery - row_count avoids a syntax error here.
+    # Normalize before counting. Comparing raw strings let `="94..."` and
+    # `94...` count as two distinct labels, so this check passed on a table
+    # that was double-counting 5,420 rows. `rows` is reserved in BigQuery.
     check = (f"SELECT COUNT(*) AS row_count, "
-             f"COUNT(DISTINCT tracking_number) AS label_count, "
+             f"COUNT(DISTINCT REGEXP_REPLACE(tracking_number, r'^=\"(.*)\"$', r'\\1'))"
+             f" AS label_count, "
              f"FORMAT('%.2f', SUM(amount_paid)) AS total FROM `{fq_table}`")
     result = run_bq(["query", "--use_legacy_sql=false", "--format=csv", check], cfg)
     if result.returncode == 0:
@@ -552,6 +595,9 @@ def main() -> int:
         if mode == "prepare":
             p.add_argument("--out", type=Path, default=Path("stamps_rows.jsonl"))
         else:
+            p.add_argument("--accept-file-order", action="store_true",
+                           help="Proceed even though file ordering changes the "
+                                "total. Only for a deliberate ordering.")
             p.add_argument("--no-impersonate", action="store_true",
                            help="Write with your own credentials instead of "
                                 "impersonating the writer service account. Use "
@@ -570,7 +616,7 @@ def main() -> int:
     cfg = load_config()
     if args.no_impersonate:
         cfg["impersonate_service_account"] = ""
-    return cmd_load(args.csv, cfg)
+    return cmd_load(args.csv, cfg, args.accept_file_order)
 
 
 if __name__ == "__main__":

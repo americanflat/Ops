@@ -143,14 +143,44 @@ The staging table (`finance.stamps_shipping_costs_stage`) is loaded with
 ### The invariant to check after every load
 
 ```sql
-SELECT COUNT(*) AS row_count, COUNT(DISTINCT tracking_number) AS label_count
+SELECT COUNT(*) AS row_count,
+       COUNT(DISTINCT REGEXP_REPLACE(tracking_number, r'^="(.*)"$', r'\1')) AS label_count
 FROM `americanflat.finance.stamps_shipping_costs`;
 ```
 
 **These two must be equal.** One row per label, always. The day they diverge,
 something is double-counting and no number built on this table can be trusted
 until it is resolved. The loader runs this check itself after every load and
-exits non-zero if it fails, so a bad load cannot report success.
+exits non-zero if it fails.
+
+Note the `REGEXP_REPLACE`. Comparing raw `tracking_number` is not enough, and
+this is not hypothetical: on 2026-09-03 the raw version of this check **passed
+on a table that was double-counting 5,420 rows**, because `="94..."` and `94...`
+are different strings and counted as two distinct labels. Normalize first or the
+invariant validates the exact failure it exists to catch.
+
+### What went wrong on 2026-09-03, and the guards added since
+
+The loader learned to strip the `="..."` wrapper while the table still held
+escaped rows and the backfill had not been run. The MERGE joins on
+`tracking_number`, so the newly-cleaned `94...` never matched the stored
+`="94..."`: all 5,420 USPS labels inserted instead of updating. 20,528 rows
+became 25,948, and $239,109.04 became $297,557.98 — $61,913.11 of cost counted
+twice.
+
+Repair with
+[`sql/stamps_repair_escaped_duplicates.sql`](../sql/stamps_repair_escaped_duplicates.sql),
+then re-run the loader with the comprehensive export to restore the post-audit
+amounts.
+
+Three guards now make this specific sequence impossible:
+
+1. **`load` refuses** if the target holds any escaped tracking number, naming
+   the repair to run. The clean-up must precede the first MERGE, not follow it.
+2. **The invariant normalizes**, as above.
+3. **`load` refuses** when file ordering changes the total, rather than warning
+   and proceeding. A message that scrolls past is not a control on a finance
+   table. Override with `--accept-file-order` only for a deliberate ordering.
 
 ### The overlapping re-export trap
 
