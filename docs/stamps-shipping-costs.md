@@ -34,7 +34,17 @@ table the dataset owner's job. Everything in this directory is built to that
 convention — the schema and loader are ready, and the create stays with the
 owner.
 
-### The command the dataset owner runs (once)
+### Option A — paste this into the BigQuery console (no CLI needed)
+
+Open the dataset in the console and run
+[`schemas/stamps_shipping_costs.sql`](../schemas/stamps_shipping_costs.sql) in
+the query editor. It is the same table as the `bq mk` form below, with the
+column descriptions inline. Its syntax is validated against BigQuery; only the
+`tables.create` grant is missing.
+
+<https://console.cloud.google.com/bigquery?ws=!1m4!1m3!3m2!1samericanflat!2sfinance>
+
+### Option B — the command the dataset owner runs (once)
 
 ```bash
 git clone --depth 1 https://github.com/americanflat/Ops /tmp/ops
