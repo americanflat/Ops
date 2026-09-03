@@ -100,6 +100,36 @@ explicitly and exits non-zero rather than reporting success.
 This is why `source_file` and `ingested_at` are on every row rather than being
 dropped as noise.
 
+### The overlapping re-export trap
+
+Stamps.com re-exports an overlapping date range under a *new* filename. In
+Drive right now:
+
+| File | Bytes |
+| --- | --- |
+| `PrintHistory_70000000002603580_7.16.2025_to_7.30.2025.csv` | 161,692 |
+| `PrintHistory_70000000002603580_7.16.2025_to_7.30.2025 (1).csv` | 186,112 |
+| `PrintHistory_70000000002603580_7.16.2025_to_7.30.2025 (2).csv` | 209,542 |
+
+Same date range, three different sizes — each a progressive re-export, not an
+identical copy. Because the filenames differ, the per-`source_file` replacement
+cannot see them: loading two of them would count the overlapping labels twice
+and inflate cost.
+
+So the loader also dedupes on `tracking_number` **within a single run**,
+keeping the last occurrence and reporting what it collapsed. **List the files
+oldest first** — last-wins means the newest export supersedes earlier ones,
+which is what you want, since a later export carries corrected amounts.
+
+The limitation to know: this only protects files passed to the *same*
+invocation. Two separate loads of two differently-named overlapping exports
+will both land. Run the duplicate check below after any backfill, and prefer
+loading a date range's files together in one command.
+
+There are also two Stamps.com accounts in play — `70000000002603580` and
+`5000029007`. Both belong in the table; nothing distinguishes them except
+`source_file`, so add an account column if that distinction ever matters.
+
 ## Where the source data lives
 
 The canonical consolidated source is the Google Sheet **"AMF Stamps.com

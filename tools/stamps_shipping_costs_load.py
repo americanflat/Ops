@@ -302,6 +302,25 @@ def permission_help(cfg: dict, raw: str) -> None:
         f"Raw error:\n{raw}", file=sys.stderr)
 
 
+def dedupe(rows: list) -> tuple:
+    """Collapse repeats of a tracking number, keeping the LAST occurrence.
+
+    Stamps.com re-exports an overlapping date range under a new filename
+    ("... (1).csv", "... (2).csv"), each a supserset of the last. Because those
+    filenames differ, the per-source_file replacement cannot see them, and
+    loading two of them would count the overlapping labels twice. Last-wins
+    means the newest export you list on the command line supersedes earlier
+    ones, so pass files in chronological order.
+    """
+    keep, dropped = {}, []
+    for row in rows:
+        key = row["tracking_number"]
+        if key in keep:
+            dropped.append((key, keep[key]["source_file"], row["source_file"]))
+        keep[key] = row
+    return list(keep.values()), dropped
+
+
 def cmd_prepare(paths: list, out_path: Path, ingested_at: str = None) -> int:
     ingested_at = ingested_at or datetime.now(timezone.utc).isoformat()
     ingested_by = gcloud_account()
@@ -313,8 +332,19 @@ def cmd_prepare(paths: list, out_path: Path, ingested_at: str = None) -> int:
     if not everything:
         print("\nNo loadable rows found.", file=sys.stderr)
         return 1
+
+    everything, dropped = dedupe(everything)
+    if dropped:
+        cross = {(a, b) for _, a, b in dropped if a != b}
+        print(f"\nDEDUPED {len(dropped)} repeated tracking number(s), keeping the "
+              f"last occurrence.")
+        for older, newer in sorted(cross):
+            n = sum(1 for _, a, b in dropped if (a, b) == (older, newer))
+            print(f"  {n:>6} label(s): {newer} supersedes {older}")
+        print("  Files are applied in the order given, so list them oldest first.")
+
     if len(paths) > 1:
-        print_summary("TOTAL", everything)
+        print_summary("TOTAL (deduped)", everything)
     with out_path.open("w", encoding="utf-8") as handle:
         for row in everything:
             handle.write(json.dumps(row) + "\n")
