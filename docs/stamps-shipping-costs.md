@@ -50,6 +50,84 @@ So the load runs from an operator machine with the Google Cloud SDK and a
 `skill-invoice-to-bigquery`, which also performs no IAM or schema operations by
 design.
 
+## Loading data
+
+Two modes. `prepare` needs no credentials and touches nothing in the cloud, so
+run it first — it is how you check the numbers before any write.
+
+```bash
+# Parse and check. Writes NDJSON locally, no cloud access.
+python3 tools/stamps_shipping_costs_load.py prepare PrintHistory_*.csv
+
+# Write, through the invoice-writer service account.
+python3 tools/stamps_shipping_costs_load.py load PrintHistory_*.csv
+
+# Write as yourself, skipping the impersonation hop (see below).
+python3 tools/stamps_shipping_costs_load.py load --no-impersonate PrintHistory_*.csv
+```
+
+`load` needs the Google Cloud SDK on PATH and a `gcloud auth login`; without it
+the loader says so and exits rather than failing obscurely. It never creates
+datasets, tables or IAM bindings. It prints which identity it is writing as
+before it touches anything.
+
+### Impersonation, and who to ask
+
+By default the load writes through
+`invoice-writer@americanflat.iam.gserviceaccount.com`, the identity
+`finance.freight_invoices` uses. That keeps writes least-privilege and
+grantable per operator without handing anyone direct dataset access — right for
+anything scheduled or shared.
+
+It also needs `roles/iam.serviceAccountTokenCreator` on that account, which not
+everyone has. On 2026-09-03 `anthony@americanflat.com` did not:
+
+```
+PERMISSION_DENIED: Failed to impersonate [invoice-writer@americanflat...]
+Permission 'iam.serviceAccounts.getAccessToken' denied on resource
+(or it may not exist)
+```
+
+That trailing clause is IAM declining to confirm existence to a caller who
+cannot see the resource — not evidence of absence. The account exists: the
+`finance` dataset ACL lists it. The ACL settles the whole question without
+needing IAM read access:
+
+| Role on `finance` | Principal |
+| --- | --- |
+| OWNER | `ivan@americanflat.com` |
+| WRITER | `invoice-writer@americanflat.iam.gserviceaccount.com` |
+| WRITER | `anthony@americanflat.com` |
+
+So the writer exists and can already write the dataset; what is missing is only
+the right to *borrow* it. `anthony@americanflat.com` is denied even
+`iam.serviceAccounts.get` on it, so this is not an impersonation-specific gap
+but no IAM visibility at all — dataset ownership and project IAM
+administration sit with different people here.
+
+**Ask `ivan@americanflat.com`** (the dataset OWNER) for
+`roles/iam.serviceAccountTokenCreator` when the impersonated path is needed.
+That matters for scheduling this load, which should not depend on one person's
+user credentials.
+
+Meanwhile anyone holding WRITER on the dataset in their own right — per that
+ACL, `anthony@americanflat.com` does — can skip the hop with
+`--no-impersonate`. It writes with your own credentials and still stamps
+`ingested_by` with your account, so provenance is recorded either way.
+
+### Re-running a file is safe
+
+Every row carries the `source_file` it came from and the `ingested_at` of the
+run that wrote it. A load appends the new generation first, then deletes that
+filename's older rows. So a corrected re-export replaces exactly its own rows
+and never doubles them, and loading a *different* file never touches another
+file's rows.
+
+The order matters: appending first means a failed load deletes nothing. If the
+cleanup step fails instead, the table holds duplicates for that one file but has
+lost nothing, and re-running resolves them. The loader says so explicitly and
+exits non-zero rather than reporting success.
+
 ### The overlapping re-export trap
 
 Stamps.com re-exports overlapping ranges under new filenames, and a Downloads
