@@ -273,9 +273,15 @@ def require_sdk() -> None:
 
 def run_bq(args: list, cfg: dict) -> subprocess.CompletedProcess:
     """Impersonation is set per-subprocess so it never mutates the caller's
-    ambient gcloud config."""
+    ambient gcloud config. An empty service account means write with the
+    caller's own credentials, skipping the impersonation hop entirely."""
     env = dict(os.environ)
-    env["CLOUDSDK_AUTH_IMPERSONATE_SERVICE_ACCOUNT"] = cfg["impersonate_service_account"]
+    sa = cfg.get("impersonate_service_account") or ""
+    if sa:
+        env["CLOUDSDK_AUTH_IMPERSONATE_SERVICE_ACCOUNT"] = sa
+    else:
+        # Inherited config could otherwise reintroduce impersonation.
+        env.pop("CLOUDSDK_AUTH_IMPERSONATE_SERVICE_ACCOUNT", None)
     cmd = [resolve_exe("bq"), f"--project_id={cfg['project_id']}",
            f"--location={cfg.get('location', 'US')}"] + args
     return subprocess.run(cmd, capture_output=True, text=True, env=env)
@@ -288,16 +294,36 @@ def is_permission_error(text: str) -> bool:
 
 
 def permission_help(cfg: dict, raw: str) -> None:
-    sa = cfg["impersonate_service_account"]
+    sa = cfg.get("impersonate_service_account") or ""
     table = f"{cfg['project_id']}.{cfg['dataset']}.{cfg['table']}"
+    lowered = (raw or "").lower()
+
+    # Distinguish "cannot impersonate" from "cannot write". They need opposite
+    # fixes, and conflating them sends the operator chasing the wrong grant.
+    if sa and ("impersonate" in lowered or "getaccesstoken" in lowered):
+        print(
+            f"\nCould not impersonate {sa}.\n\n"
+            f"Authentication worked; the impersonation hop is what failed. Note that\n"
+            f"the service account may not exist at all - the error cannot tell those\n"
+            f"apart. Check with:\n\n"
+            f"    gcloud iam service-accounts describe {sa}\n\n"
+            f"If you can already write {cfg['dataset']} yourself (you can if you created\n"
+            f"the table), skip the hop entirely:\n\n"
+            f"    python3 {Path(__file__).name} load --no-impersonate <csv> ...\n\n"
+            f"Otherwise ask an admin for roles/iam.serviceAccountTokenCreator on that\n"
+            f"service account, or for the SA to be created per\n"
+            f"docs/stamps-shipping-costs.md.\n\n"
+            f"Raw error:\n{raw}", file=sys.stderr)
+        return
+
+    who = f"the writer {sa}" if sa else "your account"
     print(
         f"\nBigQuery refused the operation on {table}.\n\n"
         f"This script cannot grant itself access. Ask the dataset owner for whichever applies:\n"
         f"  * the table does not exist yet -> they create it once, per\n"
         f"    docs/stamps-shipping-costs.md\n"
-        f"  * you cannot impersonate the writer -> roles/iam.serviceAccountTokenCreator\n"
-        f"    on {sa}\n"
-        f"  * the writer cannot write the dataset -> WRITER on {cfg['project_id']}:{cfg['dataset']}\n"
+        f"  * {who} cannot write the dataset -> WRITER on "
+        f"{cfg['project_id']}:{cfg['dataset']}\n"
         f"    plus roles/bigquery.jobUser on the project\n\n"
         f"Raw error:\n{raw}", file=sys.stderr)
 
@@ -390,6 +416,8 @@ def cmd_load(paths: list, cfg: dict) -> int:
     table = f"{cfg['dataset']}.{cfg['table']}"
     fq_table = f"{cfg['project_id']}.{cfg['dataset']}.{cfg['table']}"
 
+    sa = cfg.get("impersonate_service_account") or ""
+    print(f"writing as {'impersonated ' + sa if sa else gcloud_account() + ' (no impersonation)'}")
     probe = run_bq(["show", "--format=none", table], cfg)
     if probe.returncode != 0:
         combined = (probe.stderr or "") + (probe.stdout or "")
@@ -461,6 +489,12 @@ def main() -> int:
         p.add_argument("csv", nargs="+", type=Path)
         if mode == "prepare":
             p.add_argument("--out", type=Path, default=Path("stamps_rows.jsonl"))
+        else:
+            p.add_argument("--no-impersonate", action="store_true",
+                           help="Write with your own credentials instead of "
+                                "impersonating the writer service account. Use "
+                                "this when you can already write the dataset "
+                                "directly.")
     args = parser.parse_args()
 
     for path in args.csv:
@@ -470,7 +504,11 @@ def main() -> int:
 
     if args.mode == "prepare":
         return cmd_prepare(args.csv, args.out)
-    return cmd_load(args.csv, load_config())
+
+    cfg = load_config()
+    if args.no_impersonate:
+        cfg["impersonate_service_account"] = ""
+    return cmd_load(args.csv, cfg)
 
 
 if __name__ == "__main__":
