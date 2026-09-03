@@ -9,96 +9,46 @@ Stamps.com data out of CSVs and Google Sheets on every run.
 * **Schema:** [`schemas/stamps_shipping_costs.json`](../schemas/stamps_shipping_costs.json)
 * **Loader:** [`tools/stamps_shipping_costs_load.py`](../tools/stamps_shipping_costs_load.py)
 
-## Status: the table does not exist yet — it needs one admin command
+## Status: table created 2026-09-03
 
-**The table has not been created.** Creating it needs
-`bigquery.tables.create` on `americanflat:finance`, which the warehouse
-credential available to Claude Code sessions does not have. Verified three ways
-on 2026-09-03:
+The table exists, partitioned by `ship_date` (DAY) and clustered on
+`carrier, tracking_number`, with `tracking_number` REQUIRED. It was created by
+running [`schemas/stamps_shipping_costs.sql`](../schemas/stamps_shipping_costs.sql)
+in the BigQuery console query editor.
 
-| Check | Result |
-| --- | --- |
-| `testIamPermissions` on `americanflat:finance` | grants only `bigquery.tables.get`, `bigquery.tables.list` |
-| Same, asking for `tables.create` + `tables.updateData` | returns `{}` — neither granted |
-| A real `CREATE TABLE` DDL against `finance` | `HTTP 403 … Permission bigquery.tables.create denied on dataset americanflat:finance` |
-
-`bigquery.jobs.create` *is* granted at project level, so these sessions can
-read and query `finance` — they just cannot create or write tables. The same
-denial holds on every other dataset in the project (`Demand_Planning`,
-`observability`, `warehouse`, `shipstation`, `QC`, `Views`, `marketplaces`).
-
-This is not a misconfiguration to route around. It matches how the rest of
-finance already works: `skill-invoice-to-bigquery` deliberately performs no IAM
-or schema operations, and its `references/admin_setup.md` makes creating the
-table the dataset owner's job. Everything in this directory is built to that
-convention — the schema and loader are ready, and the create stays with the
-owner.
-
-### Option A — paste this into the BigQuery console (no CLI needed)
-
-Open the dataset in the console and run
-[`schemas/stamps_shipping_costs.sql`](../schemas/stamps_shipping_costs.sql) in
-the query editor. It is the same table as the `bq mk` form below, with the
-column descriptions inline. Its syntax is validated against BigQuery; only the
-`tables.create` grant is missing.
-
-<https://console.cloud.google.com/bigquery?ws=!1m4!1m3!3m2!1samericanflat!2sfinance>
-
-### Option B — the command the dataset owner runs (once)
+If it ever needs rebuilding, that file is the source of truth — one paste into
+the query editor, or via the SDK:
 
 ```bash
-git clone --depth 1 https://github.com/americanflat/Ops /tmp/ops
-
 bq mk --table \
   --time_partitioning_field=ship_date \
   --clustering_fields=carrier,tracking_number \
-  --description="One row per Stamps.com shipping label. amount_paid is the cost of that label." \
   americanflat:finance.stamps_shipping_costs \
-  /tmp/ops/schemas/stamps_shipping_costs.json
+  schemas/stamps_shipping_costs.json
 ```
 
-Partitioning on `ship_date` and clustering on `carrier, tracking_number` follow
-the pattern `admin_setup.md` recommends: the weekly reports always filter by a
-date window, and the join to 3PL orders is on tracking number.
+Do not use the console's **Create table** form for this. Its "Edit as text"
+schema box accepts only `name:type` — it rejects the `:REQUIRED` mode suffix,
+so `tracking_number` comes out nullable, and BigQuery cannot tighten a nullable
+column to required afterward. The form also drops every column description and
+makes the partition and cluster settings easy to miss. The DDL carries all
+three correctly.
 
-The writer service account already used for `finance.freight_invoices`
-(`invoice-writer@americanflat.iam.gserviceaccount.com`) needs `WRITER` on the
-dataset, which it has. No new service account or IAM grant is required — the
-loader writes through that same identity.
+### Claude Code sessions cannot write this table
 
-## Loading data
+Worth knowing before automating anything against it: the warehouse credential
+available to Claude Code sessions is **read-only**. It holds
+`bigquery.tables.get` and `bigquery.tables.list` on `finance` and nothing more
+— no `tables.create`, no `tables.updateData` — and the same denial holds across
+all 60 datasets in the project. Project-level `bigquery.jobs.create` *is*
+granted, so sessions can query the table; they cannot load it.
 
-The loader has two modes. `prepare` needs no credentials and touches nothing in
-the cloud, so it is always safe to run first.
-
-```bash
-# Parse and check the numbers. Writes NDJSON, no cloud access.
-python3 tools/stamps_shipping_costs_load.py prepare PrintHistory_*.csv
-
-# Load, impersonating the writer service account.
-python3 tools/stamps_shipping_costs_load.py load PrintHistory_*.csv
-```
-
-`load` requires the Google Cloud SDK on PATH and `gcloud auth login`; without
-it the loader says so and exits rather than failing obscurely. It never creates
-datasets, tables or IAM bindings — if the table is missing or impersonation is
-denied, it prints who to ask.
-
-### Re-running a file is safe
-
-Every row carries the `source_file` it came from and the `ingested_at` of the
-run that wrote it. A load appends the new generation first, then deletes that
-filename's older rows. So a corrected re-export replaces exactly its own rows
-and never doubles them, and loading a *different* file never touches another
-file's rows.
-
-The order matters: appending first means a failed load deletes nothing. If the
-cleanup step fails instead, the table holds duplicates for that one file but
-has lost nothing, and re-running the load resolves them. The loader says so
-explicitly and exits non-zero rather than reporting success.
-
-This is why `source_file` and `ingested_at` are on every row rather than being
-dropped as noise.
+So the load runs from an operator machine with the Google Cloud SDK and a
+`gcloud auth login`, writing through
+`invoice-writer@americanflat.iam.gserviceaccount.com` — the same identity
+`finance.freight_invoices` already uses. This matches
+`skill-invoice-to-bigquery`, which also performs no IAM or schema operations by
+design.
 
 ### The overlapping re-export trap
 
