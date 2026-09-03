@@ -83,6 +83,32 @@ COLUMN_ALIASES = {
 MONEY_FIELDS = ("amount_paid", "adjusted_amount")
 
 
+EXCEL_ESCAPE_RE = re.compile(r'^=\s*"(.*)"$', re.S)
+
+
+def unescape_cell(value: str) -> str:
+    """Undo the spreadsheet escaping Stamps.com applies to long numerics.
+
+    USPS tracking numbers arrive as ``="9400150105800099724475"`` - the
+    ``="..."`` formula wrapper that stops Excel rendering a 22-digit number in
+    scientific notation and truncating it. Stored verbatim it is not a tracking
+    number: it will not join to 3PL, FedEx or EDI data, and the escaped and
+    bare forms of one label do not dedupe against each other. A leading
+    apostrophe is the other form of the same trick.
+
+    No legitimate value in this feed begins with ``="`` or ``'``, so this is
+    safe to apply to every cell rather than guessing which columns carry it.
+    """
+    text = (value or "").strip()
+    match = EXCEL_ESCAPE_RE.match(text)
+    if match:
+        # Excel doubles interior quotes inside the wrapper.
+        text = match.group(1).replace('""', '"').strip()
+    elif text.startswith("'"):
+        text = text[1:].strip()
+    return text
+
+
 def normalize_header(name: str) -> str:
     """Fold a source header to its alias key: lowercase, punctuation to spaces."""
     cleaned = re.sub(r"[^a-z0-9]+", " ", (name or "").lower()).strip()
@@ -175,7 +201,7 @@ def parse_csv(path: Path, ingested_at: str, ingested_by: str):
         for raw_row in reader:
             row = {}
             for source, target in mapping.items():
-                value = (raw_row.get(source) or "").strip()
+                value = unescape_cell(raw_row.get(source))
                 if target == "ship_date":
                     row[target] = parse_date(value)
                 elif target in MONEY_FIELDS:
@@ -433,48 +459,84 @@ def cmd_load(paths: list, cfg: dict) -> int:
 
     tmpdir = Path(tempfile.mkdtemp(prefix="stamps-load-"))
     ndjson = tmpdir / "rows.jsonl"
-    # One timestamp for the whole run marks this generation of rows, so the
-    # superseded ones can be identified precisely after the load succeeds.
     run_ts = datetime.now(timezone.utc).isoformat()
     if cmd_prepare(paths, ndjson, run_ts) != 0:
         return 1
 
-    # Append BEFORE removing the previous generation. If the load fails,
-    # nothing has been deleted; if the cleanup fails, there are duplicates but
-    # no data loss, and re-running resolves them. The reverse order risks
-    # deleting rows and then failing to replace them.
+    # Weekly exports restate labels the previous export already covered, and
+    # Stamps re-rates a label days after the fact. So this MERGEs on tracking
+    # number rather than appending: a restated label updates in place, a
+    # re-rated amount overwrites the stale one, and only genuinely new labels
+    # insert. Appending would stack the same charge once per export that
+    # mentions it, and nothing downstream would look broken - the totals would
+    # simply be wrong.
+    stage = f"{cfg['dataset']}.{cfg['table']}_stage"
+    fq_stage = f"{cfg['project_id']}.{stage}"
+
     result = run_bq([
-        "load", "--source_format=NEWLINE_DELIMITED_JSON",
-        table, str(ndjson), str(SCHEMA_PATH),
+        "load", "--source_format=NEWLINE_DELIMITED_JSON", "--replace",
+        stage, str(ndjson), str(SCHEMA_PATH),
     ], cfg)
     if result.returncode != 0:
         combined = (result.stderr or "") + (result.stdout or "")
         if is_permission_error(combined):
             permission_help(cfg, combined.strip())
         else:
-            print(f"\nLoad failed (nothing was deleted):\n{combined.strip()}", file=sys.stderr)
+            print(f"\nStaging load failed (target table untouched):\n"
+                  f"{combined.strip()}", file=sys.stderr)
         return 1
-    print(f"\nappended {len(paths)} file(s) into {fq_table}")
+    print(f"staged {len(paths)} file(s) in {fq_stage}")
 
-    # Each source_file owns its rows: drop only rows from that file that predate
-    # this run, so a corrected re-export replaces its own data without doubling
-    # it and without touching any other file's rows.
-    stale = 0
-    for path in paths:
-        escaped = path.name.replace("\\", "\\\\").replace("'", "\\'")
-        sql = (f"DELETE FROM `{fq_table}` "
-               f"WHERE source_file = '{escaped}' AND ingested_at < TIMESTAMP('{run_ts}')")
-        result = run_bq(["query", "--use_legacy_sql=false", sql], cfg)
-        if result.returncode != 0:
-            combined = (result.stderr or "") + (result.stdout or "")
-            print(f"\nWARNING: loaded {path.name} but could not remove its previous "
-                  f"rows. The table may now hold duplicates for this file; "
-                  f"re-run this load to resolve.\n{combined.strip()}", file=sys.stderr)
-            stale += 1
-            continue
-        print(f"removed superseded rows for {path.name}")
-    if stale:
+    # MERGE requires at most one source row per key, so the dedupe in `prepare`
+    # is a precondition here, not a convenience. If it ever fails, BigQuery
+    # rejects the whole statement rather than picking a row arbitrarily.
+    updatable = ["ship_date", "carrier", "service", "weight_lb", "amount_paid",
+                 "adjusted_amount", "order_id", "reference_1", "cost_code",
+                 "to_name", "to_zip"]
+    all_cols = ["ship_date", "tracking_number", "carrier", "service", "weight_lb",
+                "amount_paid", "adjusted_amount", "order_id", "reference_1",
+                "cost_code", "to_name", "to_zip", "source_file", "ingested_at",
+                "ingested_by"]
+    changed = "\n     OR ".join(f"T.{c} IS DISTINCT FROM S.{c}" for c in updatable)
+    sets = ", ".join(f"{c} = S.{c}" for c in updatable + ["source_file", "ingested_at", "ingested_by"])
+    cols = ", ".join(all_cols)
+    vals = ", ".join(f"S.{c}" for c in all_cols)
+    merge = (
+        f"MERGE `{fq_table}` T USING `{fq_stage}` S\n"
+        f"ON T.tracking_number = S.tracking_number\n"
+        f"WHEN MATCHED AND ({changed}) THEN UPDATE SET {sets}\n"
+        f"WHEN NOT MATCHED THEN INSERT ({cols}) VALUES ({vals})"
+    )
+    result = run_bq(["query", "--use_legacy_sql=false", merge], cfg)
+    if result.returncode != 0:
+        combined = (result.stderr or "") + (result.stdout or "")
+        if is_permission_error(combined):
+            permission_help(cfg, combined.strip())
+        else:
+            print(f"\nMERGE failed (target table unchanged):\n{combined.strip()}",
+                  file=sys.stderr)
         return 1
+    print("merged into target")
+
+    run_bq(["rm", "-f", "-t", stage], cfg)
+
+    # The invariant that catches a double-count. One row per label, always.
+    # `rows` is reserved in BigQuery - row_count avoids a syntax error here.
+    check = (f"SELECT COUNT(*) AS row_count, "
+             f"COUNT(DISTINCT tracking_number) AS label_count, "
+             f"FORMAT('%.2f', SUM(amount_paid)) AS total FROM `{fq_table}`")
+    result = run_bq(["query", "--use_legacy_sql=false", "--format=csv", check], cfg)
+    if result.returncode == 0:
+        lines = [l for l in (result.stdout or "").strip().splitlines() if l]
+        if len(lines) >= 2:
+            rows, labels, total = (lines[-1].split(",") + ["", "", ""])[:3]
+            print(f"\ntable now: {rows} rows, {labels} distinct labels, ${total} total")
+            if rows != labels:
+                print("  INTEGRITY FAILURE: rows != distinct tracking numbers.\n"
+                      "  Something is double-counting. Do not trust downstream "
+                      "numbers until this is resolved.", file=sys.stderr)
+                return 1
+            print("  rows == distinct labels, no double-counting")
 
     print(f"\nLoaded into {fq_table}")
     return 0

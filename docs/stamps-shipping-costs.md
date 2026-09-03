@@ -115,18 +115,42 @@ ACL, `anthony@americanflat.com` does — can skip the hop with
 `--no-impersonate`. It writes with your own credentials and still stamps
 `ingested_by` with your account, so provenance is recorded either way.
 
-### Re-running a file is safe
+### Weekly loads MERGE, they do not append
 
-Every row carries the `source_file` it came from and the `ingested_at` of the
-run that wrote it. A load appends the new generation first, then deletes that
-filename's older rows. So a corrected re-export replaces exactly its own rows
-and never doubles them, and loading a *different* file never touches another
-file's rows.
+The intended cadence is a weekly load of the previous week's export, alongside
+the Friday cost-per-SKU routine. That only works because the load MERGEs.
 
-The order matters: appending first means a failed load deletes nothing. If the
-cleanup step fails instead, the table holds duplicates for that one file but has
-lost nothing, and re-running resolves them. The loader says so explicitly and
-exits non-zero rather than reporting success.
+Weekly exports overlap. Each one restates labels the previous export already
+covered, and Stamps re-rates a label days after it shipped. So the load stages
+the export and then MERGEs on `tracking_number`:
+
+* a **restated** label updates in place — no second row;
+* a **re-rated** amount overwrites the stale one, which is the whole point of
+  tracking cost rather than the original quote;
+* only a **genuinely new** label inserts.
+
+Appending instead would stack the same charge once per export that mentions it.
+Nothing would look broken — the rows are all individually valid — but every
+total downstream would be inflated, silently and permanently.
+
+`prepare`'s dedupe is a **precondition** of the MERGE, not a convenience:
+BigQuery rejects a MERGE whose source has two rows for one key rather than
+picking one arbitrarily. That is the desired failure mode.
+
+The staging table (`finance.stamps_shipping_costs_stage`) is loaded with
+`--replace` each run and dropped afterward, so nothing accumulates.
+
+### The invariant to check after every load
+
+```sql
+SELECT COUNT(*) AS row_count, COUNT(DISTINCT tracking_number) AS label_count
+FROM `americanflat.finance.stamps_shipping_costs`;
+```
+
+**These two must be equal.** One row per label, always. The day they diverge,
+something is double-counting and no number built on this table can be trusted
+until it is resolved. The loader runs this check itself after every load and
+exits non-zero if it fails, so a bad load cannot report success.
 
 ### The overlapping re-export trap
 
@@ -222,6 +246,24 @@ exact decimal strings.
 **`Weight` has two formats.** Either decimal pounds (`2.5`) or `Xlb Yoz`
 (`1lb 5oz`). The loader normalizes both to pounds — `1lb 5oz` → `1.3125`. It is
 frequently blank in the consolidated export.
+
+**Values arrive spreadsheet-escaped.** Stamps.com wraps long numerics as
+`="9400150105800099724475"` so Excel will not render them in scientific
+notation and truncate them. Stored verbatim they are not usable values: an
+escaped tracking number joins to nothing in the 3PL, FedEx or EDI data, and the
+escaped and bare forms of one label neither dedupe nor MERGE against each
+other. The loader strips the wrapper (and a leading apostrophe, the other form
+of the trick) from every cell at parse time.
+
+Rows loaded before that fix need
+[`sql/stamps_unescape_backfill.sql`](../sql/stamps_unescape_backfill.sql) —
+measured on the first load, 5,420 of 20,528 tracking numbers and **all** 20,528
+`to_zip` values were escaped. It touches identifiers only and must not move the
+money; the file carries a collision pre-check and a verification query.
+
+Note also that a raw PrintHistory export populates `to_name`, `to_zip` and
+`reference_1`, which the consolidated sheet leaves blank — another reason to
+prefer the raw exports.
 
 **Stamps.com is the label vendor, not the carrier.** `carrier` is `USPS` or
 `UPS`. Do not read "Stamps" as a carrier when comparing against FedEx.
