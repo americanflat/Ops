@@ -52,33 +52,56 @@ design.
 
 ### The overlapping re-export trap
 
-Stamps.com re-exports an overlapping date range under a *new* filename. In
-Drive right now:
+Stamps.com re-exports overlapping ranges under new filenames, and a Downloads
+folder accumulates them. A real run on 2026-09-03 over 18 files found **28,330
+repeated tracking numbers**. So the loader dedupes on `tracking_number` within
+a run, keeping the last occurrence and reporting what it collapsed.
 
-| File | Bytes |
-| --- | --- |
-| `PrintHistory_70000000002603580_7.16.2025_to_7.30.2025.csv` | 161,692 |
-| `PrintHistory_70000000002603580_7.16.2025_to_7.30.2025 (1).csv` | 186,112 |
-| `PrintHistory_70000000002603580_7.16.2025_to_7.30.2025 (2).csv` | 209,542 |
+**Prefer one comprehensive export over many weekly ones.** In that same run,
+`PrintHistory_1003346887_4.30.2026_to_8.31.2026.csv` held all 20,528 labels for
+2026-04-30 → 2026-08-31 by itself. Every weekly file was a strict subset,
+contributing not one unique label — deduping 18 files gave exactly the same
+20,528 labels and the same carrier split as that one file alone.
 
-Same date range, three different sizes — each a progressive re-export, not an
-identical copy. Because the filenames differ, the per-`source_file` replacement
-cannot see them: loading two of them would count the overlapping labels twice
-and inflate cost.
+**But the totals differed, and the wide file was right.** Deduped across 18
+files: $235,644.87. The one comprehensive file: $239,109.04 — $3,464.17 (1.45%)
+more, for the identical set of labels. Two things explain it, and both say the
+comprehensive export is authoritative:
 
-So the loader also dedupes on `tracking_number` **within a single run**,
-keeping the last occurrence and reporting what it collapsed. **List the files
-oldest first** — last-wins means the newest export supersedes earlier ones,
-which is what you want, since a later export carries corrected amounts.
+* Its 40 negative rows (refunds and postage corrections) appear in **no**
+  weekly file. Those weeklies were exported before the credits posted.
+* Carrier reweighs and rerates adjust charges *upward* after the fact. A
+  comprehensive export taken later carries them; a weekly taken near the ship
+  date does not.
 
-The limitation to know: this only protects files passed to the *same*
-invocation. Two separate loads of two differently-named overlapping exports
-will both land. Run the duplicate check below after any backfill, and prefer
-loading a date range's files together in one command.
+**Why the glob got it backwards.** `PrintHistory_*.csv` expands
+**alphabetically**, which orders by the date range *in the filename*, not by
+when the file was exported. A wide backfill export sorts early precisely
+because its range starts earliest — while being the newest and most adjusted.
+Last-wins then overwrites its post-audit amounts with stale weekly ones and
+understates cost. Label counts stay identical, so nothing looks wrong; only the
+money moves.
 
-There are also two Stamps.com accounts in play — `70000000002603580` and
-`5000029007`. Both belong in the table; nothing distinguishes them except
-`source_file`, so add an account column if that distinction ever matters.
+So `prepare` now prints the cost under last-wins *and* under first-wins, and
+flags what the file ordering is worth:
+
+```
+  cost with last occurrence kept   $235,644.87  <- loading this
+  cost with first occurrence kept  $239,109.04
+  file order is worth $3,464.17 (lower as ordered)
+```
+
+Any non-zero figure there means your file order is deciding real money. Check
+it before loading. If one export already covers the whole period, load only
+that file and the ambiguity disappears.
+
+The other limitation still holds: dedupe only sees files passed to the *same*
+invocation. Two separate loads of differently-named overlapping exports will
+both land — run the duplicate query below after any backfill.
+
+There are also multiple Stamps.com accounts in play (`1003346887`,
+`70000000002603580`, `5000029007`). All belong in the table; only `source_file`
+distinguishes them, so add an account column if that ever matters.
 
 ## Where the source data lives
 

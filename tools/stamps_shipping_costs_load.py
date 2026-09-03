@@ -302,7 +302,12 @@ def permission_help(cfg: dict, raw: str) -> None:
         f"Raw error:\n{raw}", file=sys.stderr)
 
 
-def dedupe(rows: list) -> tuple:
+def total_of(rows: list) -> Decimal:
+    return sum((Decimal(r["amount_paid"]) for r in rows
+                if r.get("amount_paid") is not None), Decimal(0))
+
+
+def dedupe(rows: list, keep_last: bool = True) -> tuple:
     """Collapse repeats of a tracking number, keeping the LAST occurrence.
 
     Stamps.com re-exports an overlapping date range under a new filename
@@ -317,6 +322,8 @@ def dedupe(rows: list) -> tuple:
         key = row["tracking_number"]
         if key in keep:
             dropped.append((key, keep[key]["source_file"], row["source_file"]))
+            if not keep_last:
+                continue
         keep[key] = row
     return list(keep.values()), dropped
 
@@ -333,6 +340,7 @@ def cmd_prepare(paths: list, out_path: Path, ingested_at: str = None) -> int:
         print("\nNo loadable rows found.", file=sys.stderr)
         return 1
 
+    first_wins, _ = dedupe(everything, keep_last=False)
     everything, dropped = dedupe(everything)
     if dropped:
         cross = {(a, b) for _, a, b in dropped if a != b}
@@ -341,7 +349,32 @@ def cmd_prepare(paths: list, out_path: Path, ingested_at: str = None) -> int:
         for older, newer in sorted(cross):
             n = sum(1 for _, a, b in dropped if (a, b) == (older, newer))
             print(f"  {n:>6} label(s): {newer} supersedes {older}")
-        print("  Files are applied in the order given, so list them oldest first.")
+
+        # A shell glob expands ALPHABETICALLY, not by export date. A backfill
+        # file covering a wide range sorts early (its range starts earliest)
+        # while actually being the newest, most-adjusted export - so last-wins
+        # can quietly replace post-audit amounts with stale ones. The operator
+        # cannot see that from label counts, which stay identical; only the
+        # money moves. So say what the money did.
+        kept_total, alt_total = total_of(everything), total_of(first_wins)
+        delta = kept_total - alt_total
+        print(f"\n  cost with last occurrence kept   ${kept_total:,.2f}  <- loading this")
+        print(f"  cost with first occurrence kept  ${alt_total:,.2f}")
+        if delta:
+            print(f"  file order is worth ${abs(delta):,.2f} "
+                  f"({'lower' if delta < 0 else 'higher'} as ordered)")
+            print(f"  CHECK THIS. Files apply in the order given and the LAST "
+                  f"occurrence of a\n"
+                  f"  tracking number wins. A shell glob orders files "
+                  f"alphabetically, by the date\n"
+                  f"  range in the name - NOT by when they were exported. A "
+                  f"wide backfill export\n"
+                  f"  sorts early but is usually the newest and most adjusted, "
+                  f"so a glob can\n"
+                  f"  overwrite its post-audit amounts with stale weekly ones "
+                  f"and understate cost.\n"
+                  f"  If one file already covers the whole period, load just "
+                  f"that file.")
 
     if len(paths) > 1:
         print_summary("TOTAL (deduped)", everything)
