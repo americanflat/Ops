@@ -1,0 +1,7 @@
+# Python build artifacts. Compiled bytecode is regenerated on every run and
+# goes stale against the source, so it does not belong in the repo.
+__pycache__/
+*.py[cod]
+
+# Loader scratch output (tools/stamps_shipping_costs_load.py prepare)
+stamps_rows.jsonl
