@@ -1,0 +1,17 @@
+[
+  {"name": "ship_date", "type": "DATE", "description": "Label ship/print date, normalized to YYYY-MM-DD from the source MM/DD/YYYY"},
+  {"name": "tracking_number", "type": "STRING", "mode": "REQUIRED", "description": "Carrier tracking number - natural key. USPS 94.., UPS 1Z.."},
+  {"name": "carrier", "type": "STRING", "description": "Carrier that moved the parcel: USPS or UPS. Stamps.com is the label vendor, not the carrier"},
+  {"name": "service", "type": "STRING", "description": "Service level as printed, e.g. 'USPS Ground Advantage' or 'UPS Ground Saver'"},
+  {"name": "weight_lb", "type": "NUMERIC", "description": "Billed weight in pounds. Parsed from a decimal or an 'Xlb Yoz' string. Often blank in the consolidated export"},
+  {"name": "amount_paid", "type": "NUMERIC", "description": "Shipping cost paid for this label. CAN BE NEGATIVE - refunds and postage corrections post as negative rows"},
+  {"name": "adjusted_amount", "type": "NUMERIC", "description": "Post-audit adjusted amount when the carrier reweighed or rerated the parcel; null when never adjusted"},
+  {"name": "order_id", "type": "STRING", "description": "Stamps.com Order ID. Join key to 3PL shipped-order reports; absent from the consolidated export"},
+  {"name": "reference_1", "type": "STRING", "description": "Reference 1 field - usually the marketplace order or PO number. Join key for marketplace cost attribution"},
+  {"name": "cost_code", "type": "STRING", "description": "Stamps.com cost code, used to tag the paying business unit or marketplace"},
+  {"name": "to_name", "type": "STRING", "description": "Recipient name as printed on the label"},
+  {"name": "to_zip", "type": "STRING", "description": "Recipient ZIP. STRING not INTEGER - leading zeros are significant"},
+  {"name": "source_file", "type": "STRING", "description": "Originating Stamps.com PrintHistory CSV filename. The idempotency key: a reload of one file replaces exactly its own rows"},
+  {"name": "ingested_at", "type": "TIMESTAMP", "description": "When the row was loaded (UTC)"},
+  {"name": "ingested_by", "type": "STRING", "description": "gcloud account that ran the load"}
+]
