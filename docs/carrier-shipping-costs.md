@@ -26,8 +26,8 @@ row keeps the full original line in `raw` (JSON), plus `source_file`,
 
 ## Status: created and backfilled 2026-10-19
 
-* **FedEx:** invoices 2026-01-05 → 2026-10-19 · 145 invoices · 19,732 lines · $522,606.80.
-  **Known gap:** the 2026-09-21 invoice week was never downloaded.
+* **FedEx:** invoices 2026-01-05 → 2026-10-19, every week · 149 invoices · 20,802 lines ·
+  $553,505.05. (The 2026-09-21 week came in later the same day from a full-September export.)
 * **UPS:** invoices 2026-09-05 → 2026-10-17 · 10 invoices · 11,739 lines · $13,909.68.
   H9229J (SC) is weekly; F20K19 (NJ) only has 9/5, 9/12, 10/10 — the other NJ
   weeks were either $0 or not downloaded (unconfirmed).
@@ -97,6 +97,20 @@ occurrence index so genuinely identical lines inside one invoice both survive.
 Existing rows were re-keyed in place the same day (19,732 rows, totals
 unchanged), and the untrimmed overlapping export was re-run as a test: 0 new,
 10,277 already present.
+
+### The paid-invoice trap (also 2026-10-19)
+
+FedEx's `Current Balance` column is what's still owed on the invoice, repeated
+on every line, and it drops to `0.00` once the invoice is paid. A full-September
+export downloaded after the 9/28 invoices were paid therefore looked like 1,029
+new lines on already-loaded invoices (~$25.6K). The invoice overlap guard
+refused it and nothing was written. `Current Balance` is now left out of the
+FedEx key (`FEDEX_UNSTABLE`); existing rows were re-keyed again (19,732 rows,
+totals unchanged) and the export then loaded the missing 9/21 week only:
+1,070 new, 3,186 already present. `Original Amount Due` is the invoice total and
+doesn't change, so it stays in the key. If FedEx ever adds another
+status-style column, add it to `FEDEX_UNSTABLE` the same way — the guard will
+name the invoices when it happens.
 
 UPS billing data has fixed column positions, so UPS keys still hash the raw line.
 

@@ -144,12 +144,18 @@ FEDEX_PAIRS = [
     ("Tracking ID Charge Description", "Tracking ID Charge Amount"),
     ("Commodity Description", "Commodity Country/Territory Code"),
 ]
+# Columns that change after an invoice is issued without the charge changing.
+# "Current Balance" drops to 0.00 once the invoice is paid, so a download
+# taken after payment would otherwise look like a different line. (Found
+# 2026-10-19: the 9/28 invoices re-downloaded in a September export.)
+FEDEX_UNSTABLE = {"Current Balance"}
 
 
 def fedex_line_keys(head, body):
-    """Stable key per FedEx line that ignores the order of repeated pairs,
-    + occurrence index (so two identical lines inside one invoice both survive)."""
-    paired = {n for pair in FEDEX_PAIRS for n in pair}
+    """Stable key per FedEx line that ignores the order of repeated pairs and
+    payment status, + occurrence index (so two identical lines inside one
+    invoice both survive)."""
+    paired = {n for pair in FEDEX_PAIRS for n in pair} | FEDEX_UNSTABLE
     seen, keys = {}, []
     for r in body:
         cell = lambda i: clean(r[i]) if i < len(r) else None
