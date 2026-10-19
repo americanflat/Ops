@@ -1,0 +1,145 @@
+[
+ {
+  "name": "row_key",
+  "type": "STRING",
+  "mode": "NULLABLE",
+  "description": "Hash of the full invoice line + occurrence index (dedupe key)"
+ },
+ {
+  "name": "invoice_number",
+  "type": "STRING",
+  "mode": "NULLABLE"
+ },
+ {
+  "name": "invoice_date",
+  "type": "DATE",
+  "mode": "NULLABLE"
+ },
+ {
+  "name": "bill_to_account",
+  "type": "STRING",
+  "mode": "NULLABLE"
+ },
+ {
+  "name": "invoice_amount_due",
+  "type": "NUMERIC",
+  "mode": "NULLABLE",
+  "description": "Original Amount Due for the whole invoice (repeats on every line)"
+ },
+ {
+  "name": "tracking_id",
+  "type": "STRING",
+  "mode": "NULLABLE",
+  "description": "Express or Ground Tracking ID"
+ },
+ {
+  "name": "shipment_date",
+  "type": "DATE",
+  "mode": "NULLABLE"
+ },
+ {
+  "name": "service_type",
+  "type": "STRING",
+  "mode": "NULLABLE"
+ },
+ {
+  "name": "transportation_charge",
+  "type": "NUMERIC",
+  "mode": "NULLABLE"
+ },
+ {
+  "name": "net_charge",
+  "type": "NUMERIC",
+  "mode": "NULLABLE",
+  "description": "Net Charge Amount \u2014 sums to the invoice total"
+ },
+ {
+  "name": "rated_weight_lbs",
+  "type": "FLOAT64",
+  "mode": "NULLABLE"
+ },
+ {
+  "name": "actual_weight_lbs",
+  "type": "FLOAT64",
+  "mode": "NULLABLE"
+ },
+ {
+  "name": "pieces",
+  "type": "INT64",
+  "mode": "NULLABLE"
+ },
+ {
+  "name": "zone",
+  "type": "STRING",
+  "mode": "NULLABLE"
+ },
+ {
+  "name": "shipper_city",
+  "type": "STRING",
+  "mode": "NULLABLE",
+  "description": "FONTANA / NJ / SC origin"
+ },
+ {
+  "name": "shipper_state",
+  "type": "STRING",
+  "mode": "NULLABLE"
+ },
+ {
+  "name": "recipient_state",
+  "type": "STRING",
+  "mode": "NULLABLE"
+ },
+ {
+  "name": "recipient_zip",
+  "type": "STRING",
+  "mode": "NULLABLE"
+ },
+ {
+  "name": "ref1",
+  "type": "STRING",
+  "mode": "NULLABLE",
+  "description": "Original Customer Reference"
+ },
+ {
+  "name": "ref2",
+  "type": "STRING",
+  "mode": "NULLABLE",
+  "description": "Original Ref#2"
+ },
+ {
+  "name": "ref3_po",
+  "type": "STRING",
+  "mode": "NULLABLE",
+  "description": "Original Ref#3/PO Number"
+ },
+ {
+  "name": "raw",
+  "type": "JSON",
+  "mode": "NULLABLE",
+  "description": "Every non-empty column from the CSV, keyed by header"
+ },
+ {
+  "name": "source_file",
+  "type": "STRING",
+  "mode": "NULLABLE",
+  "description": "File name the row came from"
+ },
+ {
+  "name": "source_sha256",
+  "type": "STRING",
+  "mode": "NULLABLE",
+  "description": "SHA-256 of that file"
+ },
+ {
+  "name": "loaded_at",
+  "type": "TIMESTAMP",
+  "mode": "NULLABLE",
+  "description": "When this row was last written"
+ },
+ {
+  "name": "loaded_by",
+  "type": "STRING",
+  "mode": "NULLABLE",
+  "description": "gcloud account that ran the load"
+ }
+]
