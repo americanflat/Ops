@@ -1,0 +1,4 @@
+# No third-party Python packages: main.py uses the standard library and
+# shells out to gcloud and bq, like the other tools in this repo.
+# System dependencies, from the base image and the Dockerfile:
+# google-cloud-cli (gcloud, bq), poppler-utils (pdftotext, for tools/customs_entries_load.py).

@@ -1,0 +1,3 @@
+# No third-party Python packages: main.py uses the standard library only
+# (http.server, urllib against the GCS and Document AI REST APIs).
+# System dependency, installed by the Dockerfile: poppler-utils (pdftotext, pdfinfo).
