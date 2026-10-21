@@ -9,6 +9,11 @@ it loads, and what the validator found is stored with it.
 This is the customs leg of the freight bills — drayage and demurrage are next,
 and will join on `bill_of_lading` (and container number).
 
+Levels 1–2 validation (does the form add up, do its own figures agree) is
+built. Level 3 — is the value and rate actually right — needs tariff rates by
+date, factory invoices and the shipment type; see
+[`invoice-validation-design.md`](invoice-validation-design.md).
+
 * **Table:** `americanflat.finance.customs_entries` (partitioned by `entry_date` month,
   clustered on `entry_number, bill_of_lading`)
 * **Flat view:** `americanflat.finance.customs_entry_tariffs` — one row per HTS row
@@ -49,6 +54,8 @@ python3 tools/customs_entries_load.py ~/Downloads/Bill_*-*_INVOICE_*.pdf
 The dry run prints every HTS row, the fees, boxes 39–44 and each finding.
 An already-extracted `.txt` (from `pdftotext -layout`) is accepted in place of a PDF.
 
+* **Shipment type** — `--shipment-type stock|amazon_di` records how the goods
+  were imported (Amazon DI is valued differently from stock). Leave it off when unknown.
 * **Same PDF twice** — skipped (matched on entry number + SHA-256).
 * **Different PDF, same entry** (a corrected 7501 / post summary correction) —
   refused; `--replace` appends the new version and then deletes the old one.

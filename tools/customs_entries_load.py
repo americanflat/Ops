@@ -580,6 +580,9 @@ def main():
     ap.add_argument("--init", action="store_true", help="create the table and view if missing")
     ap.add_argument("--allow-mismatch", action="store_true",
                     help="load entries whose own arithmetic fails (errors). Flags never block")
+    ap.add_argument("--shipment-type", choices=("stock", "amazon_di"),
+                    help="record how the goods were imported; Amazon DI is valued differently "
+                         "from stock (see docs/invoice-validation-design.md)")
     ap.add_argument("--replace", action="store_true",
                     help="replace an entry already loaded from a different PDF (e.g. a corrected 7501)")
     a = ap.parse_args()
@@ -606,6 +609,7 @@ def main():
             return 2
         findings = validate(e)
         report(e, findings, path.name)
+        e["shipment_type"] = a.shipment_type
         e["validation_findings"] = findings
         e["validation_status"] = "flagged" if any(f["severity"] in ("error", "flag") for f in findings) else "ok"
         e["raw_text"] = text

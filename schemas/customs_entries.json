@@ -24,6 +24,7 @@
   {"name": "broker_name", "type": "STRING", "description": "Box 46 - customs broker that filed the entry"},
   {"name": "broker_file_number", "type": "STRING", "description": "Box 47 - broker's own file number"},
   {"name": "po_numbers", "type": "STRING", "mode": "REPEATED", "description": "PO numbers from the box 47 reference (Ref: PO#...)"},
+  {"name": "shipment_type", "type": "STRING", "description": "stock (own inventory) or amazon_di (Amazon Direct Import) - valued differently, so value checks branch on it. Null when not yet known"},
   {"name": "total_entered_value", "type": "NUMERIC", "description": "Box 39 - total entered value as declared on the form"},
   {"name": "duty", "type": "NUMERIC", "description": "Box 41"},
   {"name": "tax", "type": "NUMERIC", "description": "Box 42"},

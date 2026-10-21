@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS `americanflat.finance.customs_entries` (
   broker_name STRING OPTIONS(description="Box 46 - customs broker that filed the entry"),
   broker_file_number STRING OPTIONS(description="Box 47 - broker's own file number"),
   po_numbers ARRAY<STRING> OPTIONS(description="PO numbers from the box 47 reference (Ref: PO#...)"),
+  shipment_type STRING OPTIONS(description="stock (own inventory) or amazon_di (Amazon Direct Import) - valued differently, so value checks branch on it. Null when not yet known"),
   total_entered_value NUMERIC OPTIONS(description="Box 39 - total entered value as declared on the form"),
   duty NUMERIC OPTIONS(description="Box 41"),
   tax NUMERIC OPTIONS(description="Box 42"),
