@@ -136,6 +136,35 @@ Per the approver, the two are built differently, so each gets its own rule set:
   handling charges. The rule set needs sample LCL invoices and the LCL part of
   the rate sheet before it can be written.
 
+## Backup files the validator needs, per customs entry
+
+Every check in `tools/customs_entries_load.py` today reads only the 7501
+itself. That is enough to prove the form is internally consistent, not that it
+is correct. Each row below is a fact the validator cannot get from the 7501,
+and the check it unlocks.
+
+| # | Backup | Fields used | Unlocks | Source | Have it? |
+|---|---|---|---|---|---|
+| 1 | **7501 entry summary**, all pages | everything | levels 1–2 (built) | broker → Bill.com / Administrator@ | 1 of ~24 recent |
+| 2 | **Factory commercial invoice + packing list** for every invoice no. on the 7501 | invoice no., PO, SKU, qty, unit price, total, currency, **incoterm**, freight/insurance lines, manufacturer | entered value vs real price; carton count vs 7501; manufacturer ID | sourcing → broker ("shipping documents") | no |
+| 3 | **Shipment type** per entry: stock or Amazon DI, and for DI the Amazon PO | type, Amazon PO | which valuation rule applies to #2 | booking (AMZ… / MPP bookings) — confirm per entry | no |
+| 4 | **Tariff rates in force**, per HTS + origin + program, with effective dates and which date governs | rate, program, from/to | rate on each line was the right one on that date; chapter 99 lines missing/extra | USITC HTS revisions; broker tariff updates | no |
+| 5 | **Approved HTS classification per SKU** | SKU → HTS | same product entered under different codes | sourcing / broker | no |
+| 6 | **Ocean freight invoice** for the container | freight charged, B/L, container | 7501's "(-) International Freight" deduction = freight actually paid | WWL freight invoice (LAX/EWR…) | no |
+| 7 | **Customs release notice** | entry no. ↔ B/L ↔ container | ties #1–#6 and #8 to one shipment | WWL release emails | yes, by email |
+| 8 | **Duty bill as entered for payment** | entry no., amount, due/paid date | billed = box 44; no duty paid twice (e.g. CLA261000320 filed under the CBP vendor) | Bill.com | approval emails only |
+| 9 | **Broker's own invoice** (brokerage/clearance fees) | fees, entry ref | brokerage billed once, at contract rate | broker CLA… invoice | no |
+| 10 | **MPF min/max for the fiscal year** | min, max | MPF check | CBP, each October | FY25–26 only; **FY27 missing** (entries from 2026-10-01) |
+
+Decisions that are not files, and only the approver can make: the valuation
+rule for stock vs Amazon DI (#3), and the tolerance at which a finding stops
+an approval vs only notes it.
+
+Example of why #2 matters: entry 8NW-1591298-8 declares $11,745 but its lines
+total $2,575. The 7501 alone cannot say which is right; the factory invoice
+(`001/KMLT10036`, $17,497.05 per the continuation sheet) and the shipment type
+can.
+
 ## Open questions for the approver
 
 1. Amazon DI vs stock: what is the valuation basis for each, and how should the
