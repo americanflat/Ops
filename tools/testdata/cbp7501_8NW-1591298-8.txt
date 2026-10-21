@@ -1,0 +1,122 @@
+                                                                                                                                 OMB APPROVAL NO. 1651-0022
+                                                    DEPARTMENT OF HOMELAND SECURITY                                               EXPIRATION DATE 02/28/2026
+                                                               U.S. Customs and Border Protection
+                                                                                                                                  Summary Status
+                                                                     ENTRY SUMMARY                                                Team                            HBZ
+1. Filer Code/Entry Number              2. Entry Type 3. Summary Date          4. Surety Number          5. Bond Type 6. Port Code 7. Entry Date
+   8NW-1591298-8                            01 ABI/P        09/29/26               054                     8              2704           09/20/2026
+8. Importing Carrier                             9. Mode Of Transport                    10. Country of Origin                         11. Import Date
+   DELAWARE EXPRESS (HLCU)                        11                                            CN                                                09/21/2026
+12. B/L or AWB Number                            13. Manufacturer ID                     14. Exporting Country                         15. Export Date
+   HLCUNG12607TYYG2                               CNCENDIS915NIN                                CN                                       09/08/2026
+16. I.T. Number                  17. I.T. Date                  18. Missing Docs         19. Foreign Port of Lading       20. U.S. Port of Unlading
+                                                                                                57020                        2704
+21. Country of Melt and Pour                                                             22. Primary Country of Smelt
+   CN
+23. Secondary Country of Smelt                                                           24. Country of Cast
+
+25. Location of Goods/G.O. Number                26. Consignee Number                    27. Importer Number              28. Reference Number
+   W185/MAERSK SEALAND - APM SAME
+                             TERMINALS                                                          32-034961800
+29. Ultimate Consignee Name (Last, First, M.I.) and Address                              30. Importer of Record Name (Last, First, M.I.) and Address
+                                                                                                AMERICANFLAT CORPORATION
+                                                                                                8375 SULTANA AVE
+
+City                                             State CA           Zip                  City     FONTANA                             State    CA     Zip 92335-3238
+                                                                                                                                                     38.
+  31                             32. Description of Merchandise                                  36.                     37.                  Duty and I.R. Tax
+                33.                                34.                 35.                                      A. HTSUS Rate
+Line      A. HTSUS Number                   A. Gross Weight      Net Quantity in         A. Entered Value       B. ADA/CVD Rate
+                                                                                                                            D Dollars
+                                                                                         B. CHGS                C. IRC Rate                 Cents
+No.       B. ADA/CVD Number                 B. Manifest Qty.     HTSUS Units                                                o
+                                                                                         C. Relationship        D. Visa Number
+                                                                                                                            l
+         I.T. DATE I.T. NO.                 MASTER BILL/AWB               HOUSE BILL                       SUBHOUSE BILL    l       BILL QTY
+                                            HLCUNG12607TYYG2                                                                a        850 CT
+                                                                                                                            r
+                                                                                                                            s
+    Invoice Number 001/KMLT10036                                                                           N                C
+001 PRDTS OF CHINA, NOTE 52                                                                                                 e
+    9903.05.31                 6274 KG                                                                      0         12.5% n                191.75
+                                                                                                                            t
+                                                                                                        C1787               s
+         ARTICLE OF CHINA,US NTE 20(R)
+         9903.88.15                                 0.00                                                    0                  7.5%                          115.05
+         OTHER;WOODEN FRAMES, OTHER
+         4414.90.0000                         3343.00 NO                                                1,534                 3.9%                             59.83
+                499 MERCHANDISE PROCESSING FEE (MPF)                                                                       0.3464%                              5.31
+Other Fee Summary (for Block 43) 39. Total Entered Value                                               CBP USE ONLY                               TOTALS
+499 Merchandise Processing Fee     $33.58                                 $11,745.00 A. LIQ CODE                B. Ascertained Duty    41. Duty
+501 Harbor Maintenance Fee          $3.22    Total Other Fees                                                                                                607.15
+                                                                                         REASON CODE            C. Ascertained Tax     42. Tax
+                                                                              $36.80                                                                              0.00
+40. DECLARATION OF IMPORTER OF RECORD (OWNER                                                                    D. Ascertained Other 43. Other
+OR PURCHASER) OR AUTHORIZED AGENT
+                                                                                                                                                               36.80
+I declare that I am the Importer of record and that the actual owner,                              E. Ascertained Total 44. Total
+purchaser, or consignee for CBP purposes is as shown above, XOR     owner                                                                       643.95
+                                                                    X was obtained pursuant to a purchase or agreement to purchase and that the
+or purchaser or agent thereof. I further declare that the merchandise
+prices set forth in the invoices are true, OR was not obtained pursuant to a purchase or agreement to purchase and the statements in the invoices
+as to value or price are true to the best of my knowledge and belief. I also declare that the statements in the documents herein filed fully disclose to the
+best of my knowledge and belief the true prices, values, quantities, rebates, drawbacks, fees, commissions, and royalties and are true and correct, and
+that all goods or services provided to the seller of the merchandise either free or at reduced cost are fully disclosed.
+I will immediately furnish to the appropriate CBP officer any information showing a different statement of facts.
+45. DECLARANT NAME (LAST,FIRST, M.I.)                TITLE                              SIGNATURE                          DATE
+Edwards, Cherise                                     ATTY-IN-FACT                                                          09/17/2026
+
+46. Broker/Filer Information Name (Last,First, M.I.) and Phone Number 47. Broker/Importer File Number
+WORLDWIDE LOGISTICS CHB LLC
+80 ROUTE 4 EAST, STE 290 PARAMUS, NJ 07652                                BCHB260900400 / Ref: PO#7P4F4YTM,73IU68GE,8VJL69WN,6K2LGG8L,5UP5FHGW
+
+PHONE: +15512027377 FAX: +12012912371
+CBP Form 7501 (02/26)                                                                                                                                     Page 1 of 2
+                                           DEPARTMENT OF HOMELAND SECURITY
+                                                      U.S. Customs and Border Protection
+
+                                       ENTRY SUMMARY CONTINUATION SHEET
+ 1. Filer Code/Entry Number
+   8NW-1591298-8
+                                                                                                                                  38.
+ 31                      32. Description of Merchandise                            36.                        37.          Duty and I.R. Tax
+             33.                          34.                 35.                                    A. HTSUS Rate
+Line   A. HTSUS No.                A. Gross Weight      Net Quantity in       A. Entered Value       B. ADA/CVD Rate
+                                                                              B. CHGS                C. IRC Rate         Dollars        Cents
+No.    B. ADA/CVD No.              B. Manifest Qty.     HTSUS Units
+                                                                              C. Relationship        D. Visa No.
+               501 HARBOR MAINTENANCE FEE (HMF)                                                                0.125%                          1.92
+
+002 ARTICLE OF CHINA,US NTE 20(F)
+    9903.88.03                 817 KG                                                        0                    25%                      50.00
+                                                                                          C233
+       ARTS ALU,STL,COP,DER ALU, DER
+       9903.05.90                                 0.00                                           0                Free                         0.00
+       COP, DER ALU & STL, NT16(C)(VI
+       9903.82.09                                 0.00                                           0                25%                      50.00
+       HSEHLD ART.N/COATED,N/FOOD CNT
+       7323.99.9080                          620.00 NO                                      200                  3.4%                          6.80
+              499 MERCHANDISE PROCESSING FEE (MPF)                                                            0.3464%                          0.69
+              501 HARBOR MAINTENANCE FEE (HMF)                                                                 0.125%                          0.25
+
+003 PRDTS OF CHINA, NOTE 52
+    9903.05.31                             3441 KG                                           0                  12.5%                     105.13
+                                                                                          C980
+       PICTURE FRAMES
+       3924.90.2000                          1490.00 NO                                     841                  3.4%                      28.59
+                                                3216 KG
+               499 MERCHANDISE PROCESSING FEE (MPF)                                                           0.3464%                          2.91
+               501 HARBOR MAINTENANCE FEE (HMF)                                                                0.125%                          1.05
+       Invoice Number 001/KMLT10036
+       Invoice Value USD                                         17,497.05
+
+       (-) International Freight                                   3,000.00
+
+       (-) Duty, Fees and Taxes                                   2,752.46
+       Total Entered Value (Invoice)                             11,744.59
+
+
+
+
+CBP Form 7501 (02/26)                                                                                                                  Page 2 of 2
+

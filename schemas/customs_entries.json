@@ -1,0 +1,81 @@
+[
+  {"name": "entry_number", "type": "STRING", "mode": "REQUIRED", "description": "CBP entry number as printed in box 1, e.g. 8NW-1591298-8 - natural key, one row per entry"},
+  {"name": "filer_code", "type": "STRING", "description": "First three characters of the entry number: the customs broker's CBP filer code"},
+  {"name": "entry_type", "type": "STRING", "description": "Box 2 entry type code, e.g. 01 (consumption)"},
+  {"name": "entry_type_detail", "type": "STRING", "description": "Box 2 qualifier printed after the code, e.g. ABI/P"},
+  {"name": "summary_date", "type": "DATE", "description": "Box 3 - date the entry summary was filed"},
+  {"name": "entry_date", "type": "DATE", "description": "Box 7 - date of entry. Decides which fiscal year's MPF minimum/maximum applies"},
+  {"name": "import_date", "type": "DATE", "description": "Box 11"},
+  {"name": "export_date", "type": "DATE", "description": "Box 15"},
+  {"name": "surety_number", "type": "STRING", "description": "Box 4"},
+  {"name": "bond_type", "type": "STRING", "description": "Box 5 - 8 is continuous bond"},
+  {"name": "port_code", "type": "STRING", "description": "Box 6 - port of entry (2704 = Los Angeles)"},
+  {"name": "importing_carrier", "type": "STRING", "description": "Box 8 - vessel / carrier as printed"},
+  {"name": "mode_of_transport", "type": "STRING", "description": "Box 9 - 11 is vessel, containerized"},
+  {"name": "country_of_origin", "type": "STRING", "description": "Box 10 (ISO-2)"},
+  {"name": "bill_of_lading", "type": "STRING", "description": "Box 12 - master B/L. Join key to drayage, demurrage and Yusen invoices"},
+  {"name": "manufacturer_id", "type": "STRING", "description": "Box 13 MID"},
+  {"name": "exporting_country", "type": "STRING", "description": "Box 14 (ISO-2)"},
+  {"name": "foreign_port_of_lading", "type": "STRING", "description": "Box 19 (Schedule K code)"},
+  {"name": "us_port_of_unlading", "type": "STRING", "description": "Box 20"},
+  {"name": "location_of_goods", "type": "STRING", "description": "Box 25 - FIRMS code / terminal"},
+  {"name": "importer_number", "type": "STRING", "description": "Box 27 - importer of record number"},
+  {"name": "importer_name", "type": "STRING", "description": "Box 30 - importer of record"},
+  {"name": "broker_name", "type": "STRING", "description": "Box 46 - customs broker that filed the entry"},
+  {"name": "broker_file_number", "type": "STRING", "description": "Box 47 - broker's own file number"},
+  {"name": "po_numbers", "type": "STRING", "mode": "REPEATED", "description": "PO numbers from the box 47 reference (Ref: PO#...)"},
+  {"name": "total_entered_value", "type": "NUMERIC", "description": "Box 39 - total entered value as declared on the form"},
+  {"name": "duty", "type": "NUMERIC", "description": "Box 41"},
+  {"name": "tax", "type": "NUMERIC", "description": "Box 42"},
+  {"name": "other_fees", "type": "NUMERIC", "description": "Box 43 - MPF + HMF + any other fees"},
+  {"name": "total", "type": "NUMERIC", "description": "Box 44 - duty + tax + other. What the importer owes CBP for this entry"},
+  {"name": "fees", "type": "RECORD", "mode": "REPEATED", "description": "Other Fee Summary for block 43, as charged (MPF here is after the min/max is applied)", "fields": [
+    {"name": "code", "type": "STRING", "description": "CBP class code, e.g. 499 MPF, 501 HMF"},
+    {"name": "name", "type": "STRING"},
+    {"name": "amount", "type": "NUMERIC"}
+  ]},
+  {"name": "lines", "type": "RECORD", "mode": "REPEATED", "description": "Box 31 entry lines", "fields": [
+    {"name": "line_number", "type": "INTEGER"},
+    {"name": "description", "type": "STRING", "description": "Merchandise description: that of the line's commodity (non chapter 99) tariff, else the line heading"},
+    {"name": "invoice_number", "type": "STRING", "description": "Commercial invoice the line belongs to"},
+    {"name": "entered_value", "type": "NUMERIC", "description": "Sum of the line's tariff entered values (chapter 99 rows carry 0)"},
+    {"name": "charges", "type": "NUMERIC", "description": "Box 36B - freight and other charges excluded from entered value"},
+    {"name": "tariffs", "type": "RECORD", "mode": "REPEATED", "fields": [
+      {"name": "hts_number", "type": "STRING"},
+      {"name": "description", "type": "STRING"},
+      {"name": "gross_weight_kg", "type": "NUMERIC"},
+      {"name": "quantity", "type": "NUMERIC"},
+      {"name": "quantity_uom", "type": "STRING"},
+      {"name": "entered_value", "type": "NUMERIC"},
+      {"name": "rate", "type": "STRING", "description": "Rate as printed: 12.5%, Free, or a specific rate"},
+      {"name": "duty", "type": "NUMERIC"}
+    ]},
+    {"name": "line_fees", "type": "RECORD", "mode": "REPEATED", "description": "Per-line MPF / HMF before the entry-level MPF min/max", "fields": [
+      {"name": "code", "type": "STRING"},
+      {"name": "name", "type": "STRING"},
+      {"name": "rate", "type": "STRING"},
+      {"name": "amount", "type": "NUMERIC"}
+    ]}
+  ]},
+  {"name": "commercial_invoices", "type": "RECORD", "mode": "REPEATED", "description": "Commercial invoice reconciliation printed on the continuation sheet", "fields": [
+    {"name": "invoice_number", "type": "STRING"},
+    {"name": "invoice_value", "type": "NUMERIC", "description": "Invoice Value as printed"},
+    {"name": "freight_deduction", "type": "NUMERIC", "description": "(-) International Freight"},
+    {"name": "duty_deduction", "type": "NUMERIC", "description": "(-) Duty, Fees and Taxes - the duty the invoice price assumed, e.g. on DDP terms"},
+    {"name": "other_deductions", "type": "NUMERIC", "description": "Any other (-) adjustment, summed"},
+    {"name": "entered_value", "type": "NUMERIC", "description": "Total Entered Value (Invoice)"}
+  ]},
+  {"name": "validation_status", "type": "STRING", "description": "ok, or flagged when any check below raised a flag. Errors never load without --allow-mismatch"},
+  {"name": "validation_findings", "type": "RECORD", "mode": "REPEATED", "description": "Every check that did not pass, as of load time", "fields": [
+    {"name": "check_name", "type": "STRING"},
+    {"name": "severity", "type": "STRING", "description": "error (the form does not add up - usually a parse problem), flag (the entry looks wrong), info"},
+    {"name": "message", "type": "STRING"},
+    {"name": "expected", "type": "NUMERIC"},
+    {"name": "actual", "type": "NUMERIC"}
+  ]},
+  {"name": "raw_text", "type": "STRING", "description": "Full layout text extracted from the PDF - the safety net for anything not mapped above"},
+  {"name": "source_file", "type": "STRING", "description": "Original PDF filename"},
+  {"name": "source_sha256", "type": "STRING", "description": "SHA-256 of the PDF. Same entry + same hash = already loaded"},
+  {"name": "ingested_at", "type": "TIMESTAMP", "description": "When the row was loaded (UTC)"},
+  {"name": "ingested_by", "type": "STRING", "description": "gcloud account that ran the load"}
+]
