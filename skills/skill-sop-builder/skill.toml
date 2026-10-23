@@ -1,7 +1,7 @@
 [skill]
 name = "skill-sop-builder"
-version = "0.2.0"
-description = "Turn any Americanflat skill on GitHub into an SOP: how to run it in Claude, plus a step-by-step runbook a teammate can follow when the skill owner is unavailable."
+version = "0.3.0"
+description = "Turn any Americanflat skill on GitHub into an SOP in Notion: how to run it in Claude, plus a step-by-step runbook a teammate can follow when the skill owner is unavailable."
 owner = "Anthony <anthony@americanflat.com>"
 tier = 1
 

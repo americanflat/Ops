@@ -7,7 +7,9 @@ description: >
   or a link to a SKILL.md); this skill reads the skill's SKILL.md, skill.toml, CHANGELOG,
   README and bundled scripts, then writes an SOP in two parts: (A) how to run the skill in
   Claude, and (B) a step-by-step runbook for when the owner is unavailable — prerequisites,
-  inputs, exact prompts, how to check the output, troubleshooting, and escalation.
+  inputs, exact prompts, how to check the output, troubleshooting, and escalation. The SOP is
+  published as a Notion page; the skill asks up front where to put it, recommending a page
+  under the name of the person running it.
 
   Use this skill when the user says "build an SOP for this skill", "make an SOP from
   skill-x", "write a runbook for this skill", "document how to run this skill", "how would
@@ -29,6 +31,36 @@ Two outputs in one document:
   when it breaks, and who to escalate to.
 
 Read this whole file before starting.
+
+---
+
+## Step 0 · Ask where the Notion page should go
+
+The SOP is published as a **Notion page**. Settle where it goes **before** you do any other
+work, so the run doesn't end with a finished SOP and nowhere to put it.
+
+1. **Find who's running the skill.** Call `notion-get-self` (Notion MCP; load it via
+   ToolSearch if needed) to get their name.
+2. **Look for a page under their name.** Run `notion-search` with their full name, and with
+   their first name if that finds nothing. You're looking for a page titled with their name
+   (e.g. "Anthony Armstrong" or "Anthony's Workspace"), usually in a teamspace. If several
+   match, prefer one they created or edited most recently.
+3. **Ask, with a recommendation.** Use `AskUserQuestion` (or ask plainly in chat if that tool
+   isn't available). Put the recommended option first:
+
+   | Option | When to offer it |
+   |---|---|
+   | **Under "{their name page}" (Recommended)** | A page with their name was found. Show its title so they can tell it's the right one. |
+   | **New "{Name}" page in my private pages (Recommended)** | No page with their name was found: create a private page titled with their name, then put the SOP under it. |
+   | **My private pages** | They want a loose draft. |
+   | **Somewhere else** | They paste a Notion page link or name a page; search for it and confirm the title before using it. |
+
+4. Remember the answer and carry on. Don't ask again later in the run.
+
+**If Notion isn't connected** (no Notion tools, or calls fail with an auth or connection
+error), say so in one line, ask whether to continue with a Markdown file instead, and skip the
+rest of this step. Don't treat a failed connection as the user's choice. Tell them they can
+connect Notion under Settings → Connectors and re-run.
 
 ---
 
@@ -162,16 +194,36 @@ Writing rules:
 
 ## Step 5 · Deliver it
 
-1. **Default: a shareable doc.** An SOP is a document people keep and share, so create it with
-   the `docs` skill (Claude Docs) if it's available. Title: `SOP — <Skill display name>`.
-2. If the user asks for a file instead, write Markdown (`SOP-<skill-name>.md`), or use the
-   `docx` / `pdf` skill if they name that format.
-3. In chat, reply with: the link or file, a 2–3 line summary of what the skill does, and the
-   list of **open questions for the owner**. Keep the SOP itself out of chat.
+1. **Default: a Notion page** at the location chosen in Step 0.
+   - If they chose "new {Name} page", create that page first, then the SOP as its child.
+   - Create the SOP with `notion-create-pages`, the chosen page as `parent`, titled
+     `SOP — <Skill display name>`.
+   - Write the body in Notion-flavored Markdown. If you're unsure of the syntax, read the
+     Notion MCP's markdown spec resource first. Keep the template's structure:
+     - headings for Part A / Part B
+     - tables for Prerequisites, Inputs and Troubleshooting
+     - code blocks for every prompt to paste
+     - a to-do list for the "Before you start" checklist
+   - Put each `⚠ Unknown` in a callout or keep the ⚠ so it stands out.
+   - After creating it, fetch the page once to confirm it exists and the tables rendered. Only
+     then report it as done; never claim a page was created if the call failed.
+2. **If an SOP for this skill already exists there** (a search for `SOP — <Skill display name>`
+   finds a child page under the chosen parent), don't create a duplicate. Ask whether to update
+   it in place (`notion-update-page`) or create a new version.
+3. **Other formats only when asked:** Markdown (`SOP-<skill-name>.md`), or the `docx` / `pdf`
+   skill if they name that format. Markdown is also the fallback when Notion isn't connected
+   (Step 0).
+4. In chat, reply with:
+   - the Notion link, saying where it was placed (and that it's private, if it is)
+   - a 2–3 line summary of what the skill does
+   - the list of **open questions for the owner**
 
-Offer once — don't do it unasked — to (a) send the open questions to the owner, or (b) save the
-SOP next to the skill (e.g. as `SOP.md` in the skill repo via the `skill-pr-helper` flow, which
-needs a version bump and CHANGELOG entry).
+   Keep the SOP itself out of chat.
+
+Offer once — don't do it unasked — to (a) send the open questions to the owner, (b) move the
+page somewhere shared, such as a team SOP database, or (c) save the SOP next to the skill
+(e.g. as `SOP.md` in the skill repo via the `skill-pr-helper` flow, which needs a version bump
+and CHANGELOG entry).
 
 ---
 
@@ -183,5 +235,6 @@ needs a version bump and CHANGELOG entry).
 - [ ] No invented facts; every gap is marked `⚠ Unknown` and listed in Open questions.
 - [ ] No secrets, tokens, or passwords anywhere in the SOP.
 - [ ] Header has repo, version, commit SHA, generated date.
+- [ ] The Notion page exists where the user chose in Step 0, and you've fetched it to confirm.
 - [ ] Someone could finish Part B start-to-end without messaging the owner, or the SOP says
       exactly which step they'd get stuck on and why.

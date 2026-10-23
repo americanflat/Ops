@@ -4,6 +4,19 @@ All notable changes to this skill are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - 2026-10-23
+
+SOPs now land in Notion by default.
+
+- **Asks where to put the page before doing anything else.** Recommends a page under the name
+  of the person running the skill (found via their Notion profile and a search), or a new
+  private page with their name if none exists. Other choices: private pages, or any page they
+  link.
+- **Publishes and verifies in Notion.** Creates the SOP as a child page, avoids duplicates by
+  offering to update an existing SOP, and re-fetches the page before reporting success.
+- **Markdown is the fallback** when Notion isn't connected, or when the user asks for a file.
+- **Why now.** SOPs need to live where the team already keeps its docs.
+
 ## [0.2.0] - 2026-10-23
 
 Lessons from the first test run, on `shipping-cost-report`. That skill turned out not to be on
