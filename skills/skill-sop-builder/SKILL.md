@@ -70,7 +70,34 @@ and nowhere to put it.
    per-department views, so a wrong one hides the SOP. Infer up to three likely options from
    the skill (e.g. a shipping-cost skill → Operations, Supply Chain, Finance), recommended
    first. Only offer values that exist in the schema.
-4. Remember the answers and carry on. Don't ask again later in the run.
+4. **Check for a duplicate SOP.** Run this check *before* asking step 3's questions, so a
+   "leave it alone" answer saves the whole run.
+   - Query the data source (`notion-query-data-sources`, `mode: "rows"`, `limit: 10`) for rows
+     where `Title` contains the skill's display name, or its slug, or where `userDefined:URL`
+     contains the skill's repo name.
+   - The skill name comes from what the user pasted. Try both forms, e.g. "Shipping Cost
+     Report" and "shipping-cost-report".
+   - If anything matches, fetch each match (title, Owner, Status, Last Edited) and add this
+     as a third question in step 3's `AskUserQuestion` call:
+
+   **An SOP for this skill already exists: "{title}" (Owner {name}, Status {status}, last
+   edited {date}). What should I do with it?**
+
+   | Option | What happens |
+   |---|---|
+   | **Amend it (Recommended)** | Keep the existing page and everything people added to it; bring it up to date with what the skill does now |
+   | **Replace it** | Rewrite the page body from scratch with the new SOP; same page and link |
+   | **Leave it alone** | Don't touch Notion; stop after a short summary of what looks out of date |
+
+   Recommend **Amend** by default. Recommend **Replace** only when the existing page is clearly
+   not a usable SOP: empty, a stub, or about a different skill.
+
+   If several pages match, list them (up to three) and ask which one is the SOP for this skill
+   before asking what to do with it. If none is the right one, treat it as no duplicate.
+
+   With a duplicate, the destination question no longer applies: the SOP stays where it is.
+   Still ask the department question, but only if the page's Department is empty.
+5. Remember the answers and carry on. Don't ask again later in the run.
 
 **If Notion isn't connected** (no Notion tools, or calls fail with an auth or connection
 error), say so in one line, ask whether to continue with a Markdown file instead, and skip the
@@ -209,11 +236,28 @@ Writing rules:
 
 ## Step 5 · Deliver it
 
-1. **Check for an existing SOP first.** Query the data source (`notion-query-data-sources`,
-   `mode: "rows"`) for a `Title` containing the skill's display name or its slug. If one
-   exists, don't create a duplicate: ask whether to update it in place (`notion-update-page`,
-   and set Status to "Needs Updating" → "In Review") or create a new version.
-2. **Create the page** with `notion-create-pages`, parent
+1. **If Step 0 found a duplicate, follow the user's choice:**
+   - **Leave it alone** → make no Notion writes at all. In chat, list what in the existing SOP
+     looks out of date or missing compared with the skill as it is now (version, inputs, steps,
+     owner). Offer the new SOP as a Markdown file if they want it. Then stop.
+   - **Amend** → fetch the existing page in full and compare it with the SOP you'd write.
+     1. Show the user a short list of proposed changes: what you'll add, what you'll
+        correct, and what you'll mark as outdated.
+     2. Wait for a yes, then apply only those changes with `notion-update-page`. Keep
+        everything else as it is, especially content people added by hand: Loom videos,
+        images, screenshots, subpages, extra tips and comments.
+     3. Add a line at the top of Context: *"Updated {date} by skill-sop-builder from
+        {repo}@{sha}: {one-line summary}."*
+     4. Set `Status` to `In Review`. Don't change `Owner` or `Backup Owner`.
+   - **Replace** → before writing, tell the user what will be lost (any videos, images,
+     subpages and hand-written sections), and wait for a yes. Then rewrite the body with
+     `notion-update-page` using the layout in step 2, on the same page so the link and comments
+     survive. Re-embed any Loom video from the old page in the Video section. Set `Status` to
+     `In Review`, and keep `Owner` / `Backup Owner` unless the user says otherwise.
+
+   Never delete the old page or create a second page next to it. In both Amend and Replace,
+   if the update would remove a subpage, stop and ask. Then skip to step 3 (Verify).
+2. **No duplicate: create the page** with `notion-create-pages`, parent
    `{"type": "data_source_id", "data_source_id": "2d14ea2d-a1ac-4127-aece-57b523f44043"}`
    (or the location chosen in Step 0). Read the Notion-flavored Markdown spec
    (`notion://docs/notion-flavored-markdown-spec`) first if you haven't this session.

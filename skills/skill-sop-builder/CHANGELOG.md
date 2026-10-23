@@ -4,6 +4,16 @@ All notable changes to this skill are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] - 2026-10-23
+
+An existing SOP is never overwritten silently.
+
+- **Asks what to do with a duplicate: amend, replace, or leave alone.** The check runs at the
+  start, before any work, so "leave it alone" costs nothing. Amend is recommended: it keeps
+  what people added (Loom videos, screenshots, tips) and shows the proposed changes before
+  writing. Replace shows what will be lost first, and keeps the same page and link.
+- **Why now.** Rewriting an SOP someone has curated would throw away their edits.
+
 ## [0.4.0] - 2026-10-23
 
 SOPs now go into the company 📕 SOPs database by default, in its house format.
