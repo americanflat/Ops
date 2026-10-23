@@ -4,6 +4,14 @@ All notable changes to this skill are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.5.1] - 2026-10-23
+
+Fixes from the first live publish, of the shipping-cost-report SOP into the SOPs database.
+
+- **Tags and Categories must be existing options.** The database rejects new multi-select
+  values, so the earlier "new lowercase tags are fine" rule made the first create fail.
+- **Prompt blocks fenced as `plain text`.** A bare fence was auto-labelled JavaScript.
+
 ## [0.5.0] - 2026-10-23
 
 An existing SOP is never overwritten silently.

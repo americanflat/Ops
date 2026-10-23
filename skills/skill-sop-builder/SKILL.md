@@ -272,8 +272,8 @@ Writing rules:
    | `Backup Owner` | Leave empty unless the user names someone. Don't guess. |
    | `Status` | `In Review`. It's AI-generated and has open questions, so never `Live`. |
    | `Department (only 1 department) ` | `["<the one chosen in Step 0>"]` |
-   | `Category` | 1–3 existing options that fit (e.g. `Reporting`, `Shipping`, `Automations`) |
-   | `Tag` | 5–10 short tags. Prefer existing options; new lowercase tags are fine |
+   | `Category` | 1–3 existing options that fit (e.g. `Reporting`, `Shipping`). Existing options only, as for Tag |
+   | `Tag` | 5–10 tags, **existing options only**. The API rejects new values; check the schema's Tag list |
    | `userDefined:URL` | The skill's GitHub URL, if it has one |
    | `Follow Easy SOP Guideline` | `__NO__`. The reviewer ticks it after adding the Loom video |
 
@@ -300,7 +300,8 @@ Writing rules:
    Inside Context:
    - Use pipe tables for Prerequisites, Inputs and Troubleshooting. Cells are inline-only, so
      use `<br />` for a line break and `\\|` for a literal pipe.
-   - Put every prompt to paste in a code block.
+   - Put every prompt to paste in a code block fenced as ` ```plain text `. A bare ` ``` ` fence
+     gets auto-labelled as JavaScript.
    - Make the "Before you start" list a to-do list.
    - Put each `⚠ Unknown` in a `<callout icon="⚠️" color="yellow_bg">` so reviewers can't
      miss it.
