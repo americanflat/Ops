@@ -8,8 +8,8 @@ description: >
   README and bundled scripts, then writes an SOP in two parts: (A) how to run the skill in
   Claude, and (B) a step-by-step runbook for when the owner is unavailable — prerequisites,
   inputs, exact prompts, how to check the output, troubleshooting, and escalation. The SOP is
-  published as a Notion page; the skill asks up front where to put it, recommending a page
-  under the name of the person running it.
+  published to Notion; the skill asks up front where to put it, recommending the company SOPs
+  database filed under the name of the person running it.
 
   Use this skill when the user says "build an SOP for this skill", "make an SOP from
   skill-x", "write a runbook for this skill", "document how to run this skill", "how would
@@ -36,39 +36,41 @@ Read this whole file before starting.
 
 ## Step 0 · Ask where the Notion page should go
 
-The SOP is published as a **Notion page**. Settle where it goes **before** you do any other
-work, so the run doesn't end with a finished SOP and nowhere to put it.
+The SOP is published to **Notion**. The default home is the company **📕 SOPs** database:
+
+- Database: <https://app.notion.com/p/amflat/f7fa6a3755874a97b2800d10bebde1cf>
+- Data source (use this for queries and as the create parent):
+  `collection://2d14ea2d-a1ac-4127-aece-57b523f44043`
+
+Its main "All" view is **grouped by Owner**. So "filed under your name" means creating the SOP
+as a row with **Owner = the person running this skill**: it then shows up in their group.
+
+Settle the destination **before** any other work, so the run doesn't end with a finished SOP
+and nowhere to put it.
 
 1. **Find who's running the skill.** Call `notion-get-self` (Notion MCP; load it via
-   ToolSearch if needed) to get their name.
-2. **Look for a page under their name.** Run `notion-search` with their full name, and with
-   their first name if that finds nothing. You're looking for a standalone page titled with
-   their name (e.g. "Anthony Armstrong" or "Anthony's Workspace").
+   ToolSearch if needed). Keep their user ID (`user://…`) for the Owner property.
+2. **Fetch the data source schema**: `notion-fetch` on the `collection://…` URL above.
+   Use the exact property names and option lists it returns.
 
-   A name search returns a lot of noise, because people's names are also rows in trackers and
-   directories. **Discard** any result that:
-   - is a database row (it has a `parent_data_source_url`), such as a training-tracker entry,
-     a SaaS-seat entry, or a 30/60/90 dashboard row
-   - sits under an "Archived" path
-   - is a database, not a page
-   - is a page *about* something else that just mentions them (meeting notes, trackers)
-
-   What's left is the candidate list. If more than one remains, show up to three in the
-   question (title plus path) and let them pick, rather than guessing.
-
-   Also note any existing pages titled `SOP — …`. If they already keep SOPs somewhere, offer
-   **"Next to your existing SOPs"** as an option.
+   Don't fetch the database page URL. It returns 600K+ characters of views and option lists
+   and overflows the context.
 3. **Ask, with a recommendation.** Use `AskUserQuestion` (or ask plainly in chat if that tool
-   isn't available). Put the recommended option first:
+   isn't available). Ask both questions in one call.
 
-   | Option | When to offer it |
+   **Where should the SOP go?** Recommended option first:
+
+   | Option | What happens |
    |---|---|
-   | **Under "{their name page}" (Recommended)** | A page with their name was found. Show its title so they can tell it's the right one. |
-   | **New "{Name}" page in my private pages (Recommended)** | No page with their name was found: create a private page titled with their name, then put the SOP under it. |
-   | **My private pages** | They want a loose draft. |
-   | **Somewhere else** | They paste a Notion page link or name a page; search for it and confirm the title before using it. |
+   | **📕 SOPs database, under your name (Recommended)** | New row in the SOPs database with Owner = you, Status = In Review |
+   | **My private pages** | A private draft (`creation_mode: "draft"`), to move into SOPs later |
+   | **Somewhere else** | They paste a Notion page or database link; fetch it and confirm the title before using it |
 
-4. Remember the answer and carry on. Don't ask again later in the run.
+   **Which department?** The `Department (only 1 department) ` property drives the
+   per-department views, so a wrong one hides the SOP. Infer up to three likely options from
+   the skill (e.g. a shipping-cost skill → Operations, Supply Chain, Finance), recommended
+   first. Only offer values that exist in the schema.
+4. Remember the answers and carry on. Don't ask again later in the run.
 
 **If Notion isn't connected** (no Notion tools, or calls fail with an auth or connection
 error), say so in one line, ask whether to continue with a Markdown file instead, and skip the
@@ -207,34 +209,74 @@ Writing rules:
 
 ## Step 5 · Deliver it
 
-1. **Default: a Notion page** at the location chosen in Step 0.
-   - If they chose "new {Name} page", create that page first, then the SOP as its child.
-   - Create the SOP with `notion-create-pages`, the chosen page as `parent`, titled
-     `SOP — <Skill display name>`.
-   - Write the body in Notion-flavored Markdown. If you're unsure of the syntax, read the
-     Notion MCP's markdown spec resource first. Keep the template's structure:
-     - headings for Part A / Part B
-     - tables for Prerequisites, Inputs and Troubleshooting
-     - code blocks for every prompt to paste
-     - a to-do list for the "Before you start" checklist
-   - Put each `⚠ Unknown` in a callout or keep the ⚠ so it stands out.
-   - After creating it, fetch the page once to confirm it exists and the tables rendered. Only
-     then report it as done; never claim a page was created if the call failed.
-2. **If an SOP for this skill already exists there** (a search for `SOP — <Skill display name>`
-   finds a child page under the chosen parent), don't create a duplicate. Ask whether to update
-   it in place (`notion-update-page`) or create a new version.
-3. **Other formats only when asked:** Markdown (`SOP-<skill-name>.md`), or the `docx` / `pdf`
+1. **Check for an existing SOP first.** Query the data source (`notion-query-data-sources`,
+   `mode: "rows"`) for a `Title` containing the skill's display name or its slug. If one
+   exists, don't create a duplicate: ask whether to update it in place (`notion-update-page`,
+   and set Status to "Needs Updating" → "In Review") or create a new version.
+2. **Create the page** with `notion-create-pages`, parent
+   `{"type": "data_source_id", "data_source_id": "2d14ea2d-a1ac-4127-aece-57b523f44043"}`
+   (or the location chosen in Step 0). Read the Notion-flavored Markdown spec
+   (`notion://docs/notion-flavored-markdown-spec`) first if you haven't this session.
+
+   **Properties** for the SOPs database. Names are exact; note the trailing space on
+   Department:
+
+   | Property | Value |
+   |---|---|
+   | `Title` | `SOP — <Skill display name>` |
+   | `Owner` | `["user://<runner's id>"]` |
+   | `Backup Owner` | Leave empty unless the user names someone. Don't guess. |
+   | `Status` | `In Review`. It's AI-generated and has open questions, so never `Live`. |
+   | `Department (only 1 department) ` | `["<the one chosen in Step 0>"]` |
+   | `Category` | 1–3 existing options that fit (e.g. `Reporting`, `Shipping`, `Automations`) |
+   | `Tag` | 5–10 short tags. Prefer existing options; new lowercase tags are fine |
+   | `userDefined:URL` | The skill's GitHub URL, if it has one |
+   | `Follow Easy SOP Guideline` | `__NO__`. The reviewer ticks it after adding the Loom video |
+
+   **Body:** follow the house "Easy SOP" layout used across the database, and fill it with
+   this skill's content:
+
+   ```
+   <p color="yellow_bg"><b>Table of Contents</b></p>
+   <table-of-contents color="gray"/>
+   ---
+   # Purpose
+   (What this skill does: the "What this skill does" section + the header facts table)
+   ---
+   # Context
+   ## Part A — Run it in Claude
+   ## Part B — When the owner is unavailable
+   ## Reference
+   ## Open questions for the owner
+   ---
+   # Video
+   (No video yet. Ask the owner to record a Loom walkthrough of Part A and embed it here.)
+   ```
+
+   Inside Context:
+   - Use pipe tables for Prerequisites, Inputs and Troubleshooting. Cells are inline-only, so
+     use `<br />` for a line break and `\\|` for a literal pipe.
+   - Put every prompt to paste in a code block.
+   - Make the "Before you start" list a to-do list.
+   - Put each `⚠ Unknown` in a `<callout icon="⚠️" color="yellow_bg">` so reviewers can't
+     miss it.
+   - Mention people with real user mentions (look them up with `notion-search`,
+     `query_type: "user"`), not as plain "@Name" text.
+3. **Verify.** Fetch the created page once. Confirm the properties are set and the tables
+   rendered. Only then report it as done; never claim a page was created if the call failed.
+4. **Other formats only when asked:** Markdown (`SOP-<skill-name>.md`), or the `docx` / `pdf`
    skill if they name that format. Markdown is also the fallback when Notion isn't connected
    (Step 0).
-4. In chat, reply with:
+5. In chat, reply with:
    - the Notion link, saying where it was placed (and that it's private, if it is)
+   - that it was filed as **In Review** and what the reviewer needs to do (answer the open
+     questions, add the Loom video, set Status to Live)
    - a 2–3 line summary of what the skill does
    - the list of **open questions for the owner**
 
    Keep the SOP itself out of chat.
 
-Offer once — don't do it unasked — to (a) send the open questions to the owner, (b) move the
-page somewhere shared, such as a team SOP database, or (c) save the SOP next to the skill
+Offer once — don't do it unasked — to (a) send the open questions to the owner, (b) set a Backup Owner, or (c) save the SOP next to the skill
 (e.g. as `SOP.md` in the skill repo via the `skill-pr-helper` flow, which needs a version bump
 and CHANGELOG entry).
 

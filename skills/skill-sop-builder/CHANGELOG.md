@@ -4,6 +4,21 @@ All notable changes to this skill are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] - 2026-10-23
+
+SOPs now go into the company 📕 SOPs database by default, in its house format.
+
+- **Default destination is the SOPs database**, filed under the runner's name. The database's
+  main view is grouped by Owner, so the SOP is created with Owner = the person running the
+  skill and Status = In Review. The opening question also confirms the one Department, which
+  drives the per-department views.
+- **Matches the house "Easy SOP" layout.** Table of Contents, Purpose, Context and Video
+  sections, with ⚠ Unknowns as callouts and a placeholder for the owner's Loom walkthrough.
+- **Checks for an existing SOP** in the database before creating one, and offers to update
+  it instead.
+- **Why now.** The team keeps every SOP in one database; SOPs scattered across personal pages
+  wouldn't be found.
+
 ## [0.3.0] - 2026-10-23
 
 SOPs now land in Notion by default.
