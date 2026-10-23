@@ -42,7 +42,7 @@ Users paste many shapes. Normalize to `owner/repo` + path to `SKILL.md`:
 | `https://github.com/americanflat/skill-foo` | `americanflat/skill-foo`, `SKILL.md` |
 | `americanflat/skill-foo` | as given |
 | `skill-foo` | `americanflat/skill-foo` |
-| `foo` (bare name) | try `americanflat/skill-foo` first, then `americanflat/foo` |
+| `foo` (bare name) | try `americanflat/skill-foo`, then `americanflat/americanflat-skill-foo`, then `americanflat/foo` |
 | a path inside a repo (`skills/foo/SKILL.md`) | ask which repo if it isn't obvious from context |
 
 Default owner is `americanflat` unless the user names another org.
@@ -50,8 +50,21 @@ Default owner is `americanflat` unless the user names another org.
 **Fetch with the GitHub MCP tools** (`mcp__github__get_file_contents`; load via ToolSearch if
 not already loaded). If the repo isn't reachable from this session, call
 `mcp__claude-code-remote__add_repo` with the owner/repo before concluding it's inaccessible.
-If a direct fetch 404s, try `mcp__github__search_code` with
-`org:americanflat filename:SKILL.md <name>` to find it.
+`mcp__claude-code-remote__list_repos` with a short `query` (e.g. `ship`, not `shipping-cost`)
+is the quickest way to see which of those names exist.
+
+If no repo matches, look in this order:
+
+1. **`americanflat/ai-skills-registry`** → `registry.json` lists every published skill with
+   its `repo_url`, owner, and version. Search it by name and description.
+2. **`americanflat/skill-candidates`** → not-yet-published skills live on branches named
+   `<skill-name>--<builder>--<date>`. Read only; never edit or merge there.
+3. **The org-installed copy in Claude.** Some skills were uploaded straight to Claude and
+   never put on GitHub. If the skill is installed in this session (it appears in your skills
+   list, and its files are under `~/.claude/skills/`), read it from there.
+
+If you build from source 2 or 3, say so in the SOP header (branch name, or "installed copy,
+not on GitHub"), and add "publish this skill to GitHub" to the Open questions.
 
 If you still can't find it, stop and tell the user exactly what you tried. **Do not write an
 SOP from the skill's name alone** — an SOP built on a guess is worse than none.
@@ -72,7 +85,10 @@ From the repo root, read (skip any that don't exist):
 5. List `scripts/`, `templates/`, `references/`, `assets/`. Open each script far enough to learn
    its **CLI arguments, required input files, environment variables, and outputs**. You do not
    need to understand every line.
-6. Note the latest commit SHA on the default branch (`mcp__github__list_commits`, `perPage: 1`)
+6. **Related skills.** If the skill names another skill that feeds it inputs or runs it
+   (e.g. a "download the files" skill upstream), read that one's SKILL.md too. That's usually
+   where the answer to "where do the inputs come from?" lives.
+7. Note the latest commit SHA on the default branch (`mcp__github__list_commits`, `perPage: 1`)
    and the latest `vX.Y.Z` tag if any. These go in the SOP header so a reader can tell when the
    SOP has gone stale.
 
@@ -107,7 +123,12 @@ the file) or **unknown**:
 - **Known failure modes** — from the SKILL.md's own warnings, CHANGELOG fixes, and script
   error messages.
 - **Manual fallback** — can the task be done without Claude (e.g. run the bundled script
-  locally, build the report by hand)? Only if the materials actually support it.
+  locally, build the report by hand)? Only if the materials actually support it. Be precise
+  about what the **script** produces versus what **Claude** adds from the SKILL.md
+  instructions. Running the script alone often gives a smaller result, and the SOP must say so.
+- **Defects you notice** — if reading the scripts turns up a likely bug (e.g. a filename rule
+  the companion skill's naming doesn't satisfy), reproduce it if you cheaply can, put it in
+  Troubleshooting and Open questions, and don't fix it yourself.
 - **Secrets** — does it need credentials? Name *where they live / who holds them*, never the
   value. If you see an actual secret in the repo, **stop and tell the user to escalate to a
   Governor**; do not copy it into the SOP.

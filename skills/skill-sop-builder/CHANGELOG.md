@@ -4,6 +4,20 @@ All notable changes to this skill are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] - 2026-10-23
+
+Lessons from the first test run, on `shipping-cost-report`. That skill turned out not to be on
+GitHub at all.
+
+- **Finds skills that aren't in a `skill-*` repo.** Tries the `americanflat-skill-*` naming
+  too, then checks `ai-skills-registry`, `skill-candidates` branches, and the org-installed
+  copy in Claude, and labels the SOP's source accordingly.
+- **Reads related skills.** An upstream "download the inputs" skill is usually where the
+  answer to "where do the inputs come from?" lives.
+- **Honest manual fallback and defect notes.** Separates what the script produces from what
+  Claude adds, and records likely bugs found while reading as open questions.
+- **Example SOP** in `examples/SOP-shipping-cost-report.md`.
+
 ## [0.1.0] - 2026-10-23
 
 First draft, ahead of review through the Builder create → publish flow.
