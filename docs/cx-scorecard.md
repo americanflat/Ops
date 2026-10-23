@@ -4,14 +4,17 @@ A customer-experience dashboard over the Zendesk sync in BigQuery, with metrics
 you pick from a catalog. It lives at
 https://claude.ai/artifact/5jVfSs29zeRkJ7uRzvxdx1 (private until shared).
 
-The four queries behind it are in `sql/`:
+The dashboard has a date range. It holds one row per ticket, per order and per
+day, and works out every metric for whatever range is picked, compared with the
+same number of days just before it. The five queries behind it are in `sql/`:
 
-| File | Feeds |
+| File | Rows |
 |---|---|
-| `cx_scorecard_metrics.sql` | Every metric card and the promises table. One row per (period, metric): each Monday week since 2025-12-01, plus `last_28d` and `prior_28d`. |
-| `cx_scorecard_sku.sql` | Damage, missing and wrong-item tickets per SKU, for tickets that name a Shopify order. |
-| `cx_scorecard_warehouse.sql` | Damage tickets per 100 Shopify orders, by shipping warehouse. |
-| `cx_scorecard_csat.sql` | Satisfaction surveys and ratings per month. |
+| `cx_scorecard_tickets.sql` | One per ticket since 2025-12-01: arrival day, first reply, business days to reply, solved, survey, issue type, box condition, photo, Shopify order. No IDs, names or text. |
+| `cx_scorecard_orders.sql` | One per Shopify order: business days to ship, warehouse, whether it got a damage ticket. |
+| `cx_scorecard_daily.sql` | One per day: agent replies written, open queue at day end. |
+| `cx_scorecard_sku_issues.sql` | One per issue ticket and SKU on its Shopify order. |
+| `cx_scorecard_sku_units.sql` | Shopify units sold per SKU per week. |
 
 The dashboard holds a saved copy of each result. To make it live, sign in the
 Google Cloud BigQuery connector in claude.ai and point each dataset at its query.
