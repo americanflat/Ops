@@ -239,7 +239,8 @@ Writing rules:
 1. **If Step 0 found a duplicate, follow the user's choice:**
    - **Leave it alone** → make no Notion writes at all. In chat, list what in the existing SOP
      looks out of date or missing compared with the skill as it is now (version, inputs, steps,
-     owner). Offer the new SOP as a Markdown file if they want it. Then stop.
+     owner). Include a clickable link to the existing SOP page so the user can open it. Offer
+     the new SOP as a Markdown file if they want it. Then stop.
    - **Amend** → fetch the existing page in full and compare it with the SOP you'd write.
      1. Show the user a short list of proposed changes: what you'll add, what you'll
         correct, and what you'll mark as outdated.
@@ -313,7 +314,18 @@ Writing rules:
    skill if they name that format. Markdown is also the fallback when Notion isn't connected
    (Step 0).
 5. In chat, reply with:
-   - the Notion link, saying where it was placed (and that it's private, if it is)
+   - **A clickable link to the SOP page as the first line**, so the user can open it in one
+     click:
+
+     ```
+     **SOP published:** [SOP — <Skill display name>](<page url>)
+     ```
+
+     - Use the `url` that `notion-create-pages` (or the verify fetch) returned, with any
+       `?pvs=…` query string removed, e.g. `https://app.notion.com/p/4028555c2abc813b8213fe3f2a8512db`.
+     - Write it as a Markdown link with the page title as the text, never a bare ID.
+     - Only give the link once the verify fetch has succeeded.
+   - Where it was placed: the SOPs database, Department, Owner. Say if it's private.
    - that it was filed as **In Review** and what the reviewer needs to do (answer the open
      questions, add the Loom video, set Status to Live)
    - a 2–3 line summary of what the skill does
@@ -336,5 +348,6 @@ and CHANGELOG entry).
 - [ ] No secrets, tokens, or passwords anywhere in the SOP.
 - [ ] Header has repo, version, commit SHA, generated date.
 - [ ] The Notion page exists where the user chose in Step 0, and you've fetched it to confirm.
+- [ ] Your reply opens with a clickable link to the SOP page.
 - [ ] Someone could finish Part B start-to-end without messaging the owner, or the SOP says
       exactly which step they'd get stuck on and why.
