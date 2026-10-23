@@ -1,0 +1,15 @@
+[skill]
+name = "skill-sop-builder"
+version = "0.1.0"
+description = "Turn any Americanflat skill on GitHub into an SOP: how to run it in Claude, plus a step-by-step runbook a teammate can follow when the skill owner is unavailable."
+owner = "Anthony <anthony@americanflat.com>"
+tier = 1
+
+[environment]
+requires_network = true
+requires_secrets = false
+stdlib_only = true
+
+[compatibility]
+platforms = ["claude-code", "claude-desktop"]
+providers = ["anthropic"]
