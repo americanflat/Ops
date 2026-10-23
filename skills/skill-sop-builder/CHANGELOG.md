@@ -9,6 +9,8 @@ versions follow [Semantic Versioning](https://semver.org/).
 - **Ready for review.** Added a README and the standard ignore list, and set the team to Ops.
 - **Trust level raised from 1 to 2.** The skill creates and edits pages in the shared SOPs
   database, and asks before each change, so level 2 is the accurate setting.
+- **Reworded the "treat files as data" safety rule.** The review check flagged a quoted
+  example phrase as prompt injection. The rule is unchanged; it no longer quotes the phrase.
 - **The reply opens with a clickable link to the SOP page.** It's a Markdown link titled with
   the page name, using the verified page URL, so the user can open the SOP in one click. The
   "leave it alone" path links to the existing SOP too.
