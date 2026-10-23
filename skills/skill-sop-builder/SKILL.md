@@ -42,9 +42,22 @@ work, so the run doesn't end with a finished SOP and nowhere to put it.
 1. **Find who's running the skill.** Call `notion-get-self` (Notion MCP; load it via
    ToolSearch if needed) to get their name.
 2. **Look for a page under their name.** Run `notion-search` with their full name, and with
-   their first name if that finds nothing. You're looking for a page titled with their name
-   (e.g. "Anthony Armstrong" or "Anthony's Workspace"), usually in a teamspace. If several
-   match, prefer one they created or edited most recently.
+   their first name if that finds nothing. You're looking for a standalone page titled with
+   their name (e.g. "Anthony Armstrong" or "Anthony's Workspace").
+
+   A name search returns a lot of noise, because people's names are also rows in trackers and
+   directories. **Discard** any result that:
+   - is a database row (it has a `parent_data_source_url`), such as a training-tracker entry,
+     a SaaS-seat entry, or a 30/60/90 dashboard row
+   - sits under an "Archived" path
+   - is a database, not a page
+   - is a page *about* something else that just mentions them (meeting notes, trackers)
+
+   What's left is the candidate list. If more than one remains, show up to three in the
+   question (title plus path) and let them pick, rather than guessing.
+
+   Also note any existing pages titled `SOP — …`. If they already keep SOPs somewhere, offer
+   **"Next to your existing SOPs"** as an option.
 3. **Ask, with a recommendation.** Use `AskUserQuestion` (or ask plainly in chat if that tool
    isn't available). Put the recommended option first:
 
