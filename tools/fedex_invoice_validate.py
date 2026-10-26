@@ -1,0 +1,205 @@
+#!/usr/bin/env python3
+"""Validate a FedEx invoice CSV against Stedi 945 shipping data in BigQuery.
+
+Every FedEx invoice line (one tracking ID) is matched to the Stedi 945 ship
+confirmations in `finance.shipment_reconciliation`, which already resolves each
+945 order to a marketplace channel through `warehouse.channel_keys`.
+
+Match order, first hit wins:
+  1. FedEx tracking ID   = 945 cartonTracking
+  2. FedEx Customer Ref  = 945 ssccBarcode  (the label's SSCC)
+
+Any line whose order still has no marketplace is then given a *suggested*
+channel by looking its FedEx references (Ref#2, Ref#3/PO) up in
+`warehouse.channel_keys` after stripping the decorations warehouses add:
+`AME*`/`AMS*` prefixes, `-A` carton suffixes, `R`/`R2` reship suffixes,
+`RPL-<order>-<hash>` replacements and `WHS-<n>-<po>` store shipments. A
+suggestion is a lead to confirm, not a resolution.
+
+Read-only: it only runs SELECT queries, so the session's read-only BigQuery
+credential is enough. Needs the `bq` CLI.
+
+    python3 tools/fedex_invoice_validate.py FedEx_invoice_*.CSV
+    python3 tools/fedex_invoice_validate.py --out-dir out/ FedEx_invoice_*.CSV
+"""
+
+import argparse
+import collections
+import csv
+import json
+import os
+import re
+import subprocess
+import sys
+from decimal import Decimal
+
+PROJECT = "americanflat"
+RECON = f"`{PROJECT}.finance.shipment_reconciliation`"
+CHANNEL_KEYS = f"`{PROJECT}.warehouse.channel_keys`"
+
+# Keeps each query's inlined invoice literal well under BigQuery's 1 MB limit.
+CHUNK = 4000
+
+TRACKING = "Express or Ground Tracking ID"
+REF1 = "Original Customer Reference"
+REF2 = "Original Ref#2"
+REF3 = "Original Ref#3/PO Number"
+
+
+def ref_candidates(*refs):
+    """Order keys a warehouse may have hidden inside a FedEx reference."""
+    out = []
+    for ref in refs:
+        ref = (ref or "").strip()
+        if not ref or ref.upper() in ("NONE", "NO REFERENCE INFORMATION"):
+            continue
+        ref = re.sub(r"^[A-Z]{3}\*", "", ref)
+        out.append(ref)
+        for pat in (r"^(.+?)-[A-Z]$",           # 4794150206-A
+                    r"^(.+?)R\d*$",             # 4791738745R, 27402R2
+                    r"^RPL-(\d+)-",             # RPL-26532-3E103AD6
+                    r"^WHS-\d+-(\d+)$"):        # WHS-10545-45628836
+            m = re.match(pat, ref)
+            if m:
+                out.append(m.group(1))
+    return list(dict.fromkeys(out))
+
+
+def read_invoice(paths):
+    rows = []
+    for path in paths:
+        with open(path, newline="", encoding="utf-8-sig") as f:
+            for r in csv.DictReader(f):
+                if not r.get(TRACKING):
+                    continue
+                rows.append({
+                    "source_file": os.path.basename(path),
+                    "invoice_number": r["Invoice Number"],
+                    "tracking_id": r[TRACKING].strip(),
+                    "ship_date": r["Shipment Date"],
+                    "service_type": r["Service Type"],
+                    "shipper_city": r["Shipper City"],
+                    "recipient": r["Recipient Name"] or r["Recipient Company"],
+                    "ref1": r[REF1].strip(),
+                    "ref2": r[REF2].strip(),
+                    "ref3_po": r[REF3].strip(),
+                    "net_charge": Decimal(r["Net Charge Amount"] or "0"),
+                })
+    return rows
+
+
+def sql_str(s):
+    return "'" + s.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
+def build_query(rows):
+    structs = ",".join(
+        f"({i},{sql_str(r['tracking_id'])},{sql_str(r['ref1'])},"
+        f"ARRAY<STRING>[{','.join(sql_str(c) for c in ref_candidates(r['ref2'], r['ref3_po']))}])"
+        for i, r in rows)
+    return f"""
+WITH inv AS (
+  SELECT * FROM UNNEST(ARRAY<STRUCT<i INT64, trk STRING, ref1 STRING, cands ARRAY<STRING>>>[{structs}])),
+rec AS (
+  SELECT DISTINCT cartonTracking, ssccBarcode, orderNumber, channel, resolutionStatus,
+         ARRAY_TO_STRING(candidateChannels, '+') AS candidateChannels, warehouse, carrierScac, shipDate
+  FROM {RECON}),
+by_trk AS (SELECT * FROM rec WHERE cartonTracking IS NOT NULL
+           QUALIFY ROW_NUMBER() OVER (PARTITION BY cartonTracking ORDER BY orderNumber) = 1),
+by_sscc AS (SELECT * FROM rec WHERE ssccBarcode IS NOT NULL
+            QUALIFY ROW_NUMBER() OVER (PARTITION BY ssccBarcode ORDER BY orderNumber) = 1),
+sug AS (
+  SELECT inv.i, STRING_AGG(DISTINCT ck.channel, '+' ORDER BY ck.channel) AS suggested,
+         STRING_AGG(DISTINCT ck.k, '+' ORDER BY ck.k) AS suggested_key
+  FROM inv, UNNEST(inv.cands) c JOIN {CHANNEL_KEYS} ck ON ck.k = c
+  GROUP BY 1)
+SELECT inv.i,
+  CASE WHEN t.orderNumber IS NOT NULL THEN 'tracking'
+       WHEN s.orderNumber IS NOT NULL THEN 'sscc' END AS matched_on,
+  COALESCE(t.orderNumber, s.orderNumber) AS order_number,
+  COALESCE(t.channel, s.channel) AS channel,
+  COALESCE(t.resolutionStatus, s.resolutionStatus, 'not_in_945') AS resolution,
+  COALESCE(t.candidateChannels, s.candidateChannels) AS candidate_channels,
+  COALESCE(t.warehouse, s.warehouse) AS warehouse_945,
+  COALESCE(t.carrierScac, s.carrierScac) AS carrier_945,
+  CAST(COALESCE(t.shipDate, s.shipDate) AS STRING) AS ship_date_945,
+  sug.suggested AS suggested_channel, sug.suggested_key
+FROM inv
+LEFT JOIN by_trk t ON t.cartonTracking = inv.trk
+LEFT JOIN by_sscc s ON t.orderNumber IS NULL AND inv.ref1 != '' AND s.ssccBarcode = inv.ref1
+LEFT JOIN sug USING (i)
+"""
+
+
+def run_bq(sql):
+    try:
+        p = subprocess.run(
+            ["bq", "query", f"--project_id={PROJECT}", "--use_legacy_sql=false",
+             "--format=json", "--max_rows=1000000", "--quiet"],
+            input=sql, capture_output=True, text=True)
+    except FileNotFoundError:
+        sys.exit("bq CLI not found. Install the Google Cloud SDK and run `gcloud auth login`.")
+    if p.returncode:
+        sys.exit(f"BigQuery query failed:\n{p.stderr or p.stdout}")
+    return json.loads(p.stdout or "[]")
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("invoices", nargs="+", help="FedEx invoice CSV export(s)")
+    ap.add_argument("--out-dir", default=".", help="where to write the result CSVs")
+    args = ap.parse_args()
+
+    rows = read_invoice(args.invoices)
+    if not rows:
+        sys.exit("No invoice lines with a tracking ID found.")
+
+    indexed = list(enumerate(rows))
+    for start in range(0, len(indexed), CHUNK):
+        for m in run_bq(build_query(indexed[start:start + CHUNK])):
+            rows[int(m.pop("i"))].update({k: v or "" for k, v in m.items()})
+
+    os.makedirs(args.out_dir, exist_ok=True)
+    fields = list(rows[0].keys())
+    all_path = os.path.join(args.out_dir, "fedex_validation_lines.csv")
+    miss_path = os.path.join(args.out_dir, "fedex_orders_without_marketplace.csv")
+    with open(all_path, "w", newline="") as f:
+        w = csv.DictWriter(f, fields)
+        w.writeheader()
+        w.writerows(rows)
+    missing = [r for r in rows if r["resolution"] != "resolved"]
+    with open(miss_path, "w", newline="") as f:
+        w = csv.DictWriter(f, fields)
+        w.writeheader()
+        w.writerows(sorted(missing, key=lambda r: (r["resolution"], r["order_number"], r["tracking_id"])))
+
+    # Summary
+    total = sum(r["net_charge"] for r in rows)
+    invoices = sorted({r["invoice_number"] for r in rows})
+    print(f"FedEx invoice lines: {len(rows)}  across {len(invoices)} invoice(s)  net ${total:,.2f}")
+    by_res = collections.Counter(r["resolution"] for r in rows)
+    print("945 match: " + ", ".join(f"{k} {v}" for k, v in sorted(by_res.items())))
+    print()
+    print(f"{'Marketplace':<14}{'Lines':>7}{'Orders':>8}{'Net charge':>14}{'Avg/line':>10}")
+    groups = collections.defaultdict(list)
+    for r in rows:
+        groups[r["channel"] or "(none)"].append(r)
+    for ch, rs in sorted(groups.items(), key=lambda kv: -sum(r["net_charge"] for r in kv[1])):
+        net = sum(r["net_charge"] for r in rs)
+        orders = len({r["order_number"] for r in rs if r["order_number"]})
+        print(f"{ch:<14}{len(rs):>7}{orders:>8}{net:>14,.2f}{net / len(rs):>10,.2f}")
+
+    print()
+    print(f"Orders with no marketplace identifier: {len({(r['order_number'] or r['tracking_id']) for r in missing})}"
+          f" ({len(missing)} lines, ${sum(r['net_charge'] for r in missing):,.2f})")
+    for r in sorted(missing, key=lambda r: (r["resolution"], r["order_number"])):
+        sug = f"  -> suggest {r['suggested_channel']} ({r['suggested_key']})" if r["suggested_channel"] else ""
+        print(f"  {r['resolution']:<11} order={r['order_number'] or '-':<18} trk={r['tracking_id']:<13}"
+              f" ref2={r['ref2'] or '-':<24} {r['service_type']:<25} ${r['net_charge']:>7}{sug}")
+    print()
+    print(f"Wrote {all_path}")
+    print(f"Wrote {miss_path}")
+
+
+if __name__ == "__main__":
+    main()
