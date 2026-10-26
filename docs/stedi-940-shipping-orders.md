@@ -23,10 +23,16 @@ partnerships:
 | `ACNDA_TGTPL` (+ `N9*DP` Target) | TARG | Target PO | Target PO |
 | `AMAZON.COM` | AMZC | DF PO | — |
 | `WAYFAIR LLC` | WAYF | CS… PO | — |
-| `SHOPIFY` | SHIPSTATION | Shopify order # | Shopify order id (FedEx Ref#3) |
+| `SHOPIFY` / `SHIPSTATION` | SHIPSTATION | Shopify order # | Shopify order id (FedEx Ref#3) |
 | `WALMARTCOM` | WALC | customer order # | PO |
 | `MACYS` | MACY | order # | order #-A |
 | `AMAZON.FBA` / `AMAZON.VC` | AMZFBA / AMZVC | shipment id | shipment id |
+| `PLUS Haven` | `PLUS Haven` (unmapped) | | |
+
+Sep 1 – Oct 26 2026 for scale: 33,329 940s (32,558 orders; 705 orders have more
+than one 940). Amazon DF 14,423, Target 9,009, Shopify 4,593 (+94 sent as
+`SHIPSTATION`), Wayfair 3,039, Walmart 1,845, Macy's 276, PLUS Haven 55,
+Amazon FBA 12. Every 940 had a W05 order number and at least one W01 line.
 
 The IT → channel mapping lives in the view, not the table, so it can change
 without reloading. Keep `CHANNEL_940` in `tools/fedex_invoice_validate.py` in

@@ -120,7 +120,7 @@ def ref_candidates(*refs):
 # the warehouse.shipments_940 view (schemas/shipments_940_raw.sql).
 CHANNEL_940 = {
     "ACNDA_TGTPL": "TARG", "AMAZON.COM": "AMZC", "AMAZON.VC": "AMZVC",
-    "AMAZON.FBA": "AMZFBA", "WAYFAIR LLC": "WAYF", "SHOPIFY": "SHIPSTATION",
+    "AMAZON.FBA": "AMZFBA", "WAYFAIR LLC": "WAYF", "SHOPIFY": "SHIPSTATION", "SHIPSTATION": "SHIPSTATION",
     "WALMARTCOM": "WALC", "MACYS": "MACY", "KOHLS": "KOHLS",
 }
 

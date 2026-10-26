@@ -60,7 +60,7 @@ SELECT
     WHEN marketplaceRaw = 'AMAZON.VC'   THEN 'AMZVC'
     WHEN marketplaceRaw = 'AMAZON.FBA'  THEN 'AMZFBA'
     WHEN marketplaceRaw = 'WAYFAIR LLC' THEN 'WAYF'
-    WHEN marketplaceRaw = 'SHOPIFY'     THEN 'SHIPSTATION'
+    WHEN marketplaceRaw IN ('SHOPIFY', 'SHIPSTATION') THEN 'SHIPSTATION'
     WHEN marketplaceRaw = 'WALMARTCOM'  THEN 'WALC'
     WHEN marketplaceRaw = 'MACYS'       THEN 'MACY'
     WHEN marketplaceRaw = 'KOHLS'       THEN 'KOHLS'
