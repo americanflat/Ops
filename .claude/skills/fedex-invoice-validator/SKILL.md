@@ -33,6 +33,11 @@ Source: `americanflat.finance.shipment_reconciliation` — the Stedi 945 lines
 
 1. FedEx `Express or Ground Tracking ID` = 945 `cartonTracking`
 2. else FedEx `Original Customer Reference` (the SSCC) = 945 `ssccBarcode`
+3. else FedEx Ref#2 / Ref#3 = 945 `orderNumber` / `warehouseReference`
+   (`matched_on = order_ref`). The order has a 945, but this billed label is
+   not one of its cartons: e.g. order 28542's 945 lists 3 cartons and FedEx
+   billed 4. The line takes the order's marketplace, and is also listed under
+   "Billed labels not on the order's 945" for review with the warehouse.
 
 **Reships.** The warehouse cannot process the same order number twice, so a
 reship is sent as the original marketplace order number followed by `R`, `R`
@@ -71,12 +76,14 @@ Present it as a suggestion, not a resolution.
    invoices' `Net Charge Amount`), and the match breakdown.
 2. The marketplace table (lines, orders, net charge, avg per line), then the
    reships and replacements with the original order each one belongs to.
-3. **Orders with no marketplace identifier** — always list them all, grouped:
+3. Billed labels not on the order's 945: the warehouse shipped more cartons
+   than it confirmed, or relabelled one. Worth raising with the warehouse.
+4. **Orders with no marketplace identifier** — always list them all, grouped:
    - has a suggested channel → usually a shipment missing from the 945 data.
    - internal (SAMPLE*, ShootSample*, PODTEST*, UGC-*) → company cost, no marketplace.
    - `not_in_945` with no references → shipped outside the warehouse (Kent's
      overnights, return labels); flag for review.
-4. Send `fedex_orders_without_marketplace.csv` (and the full
+5. Send `fedex_orders_without_marketplace.csv` (and the full
    `fedex_validation_lines.csv` if asked) to the user.
 
 Channel codes: TARG Target, SHIPSTATION Shopify/ShipStation, WAYF Wayfair,
