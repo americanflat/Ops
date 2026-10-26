@@ -19,6 +19,8 @@ and says which marketplace each charge belongs to.
 
 ```bash
 python3 tools/fedex_invoice_validate.py --out-dir <scratchpad>/fedex <invoice.csv> [more.csv ...]
+# once the user supplies 940s for the orders with no 945:
+python3 tools/fedex_invoice_validate.py --edi-940 <940 json files or dir> --out-dir <scratchpad>/fedex <invoice.csv>
 ```
 
 Read-only (SELECT queries only) and needs only the `bq` CLI, so it works with
@@ -56,12 +58,21 @@ names one, it resolves as `ship_to`. The `CG…` orders (e.g. `CG100126SCWF1`)
 ship to "Wayfair Store …", "Wayfair Warehouse …" or "CastleGate Warehouse …",
 so they resolve to Wayfair. Add new names to `SHIP_TO_CHANNELS` in the script.
 
-Reships, replacements and ship-to matches count toward their marketplace; they
-are not orders without a marketplace.
+**No 945 → check the 940.** If a line has no 945 at all, the marketplace comes
+from the order's 940 (warehouse shipping order). 940s are **not in BigQuery**,
+so ask the user for them (Stedi JSON, one file per order or a folder) and rerun
+with `--edi-940 <files or dir>`. The script matches the 940's W05 depositor/PO
+number to the FedEx references and reads the marketplace from `N9*DP`
+(department, e.g. "Target"), else `N9*IA`. These lines resolve as `940`, and
+are also a finding: the order went to the warehouse but its shipment was never
+confirmed with a 945.
+
+Reships, replacements, ship-to and 940 matches count toward their marketplace;
+they are not orders without a marketplace.
 
 Each line ends up `resolved` (one channel), `reship` / `replacement`
 (resolved through the original order), `ship_to` (resolved from the 945
-ship-to name), `unresolved` (in the 945s but the order number matches no
+ship-to name), `940` (no 945; marketplace from the 940), `unresolved` (in the 945s but the order number matches no
 marketplace), `ambiguous` (matches several), or `not_in_945` (no ship
 confirmation at all).
 

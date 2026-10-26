@@ -29,6 +29,13 @@ names the marketplace itself — "Wayfair Store Wilmette", "CastleGate Warehouse
 Columbus" on the CG... Wayfair store/warehouse orders — resolves to that
 marketplace with resolution `ship_to`.
 
+940s: a line with no 945 at all is looked up in the 940 warehouse shipping
+orders passed with --edi-940 (Stedi JSON, as files or directories). The 940's
+W05 depositor / PO number is matched to the FedEx references, and the
+marketplace is read from its N9*DP department (else N9*IA). Resolution `940`:
+the order was sent to the warehouse but its shipment was never confirmed.
+940s are not in BigQuery, so they have to be supplied.
+
 Any line whose order still has no marketplace is then given a *suggested*
 channel by looking its FedEx references (Ref#2, Ref#3/PO) up in
 `warehouse.channel_keys` after stripping the decorations warehouses add:
@@ -40,6 +47,7 @@ credential is enough. Needs the `bq` CLI.
 
     python3 tools/fedex_invoice_validate.py FedEx_invoice_*.CSV
     python3 tools/fedex_invoice_validate.py --out-dir out/ FedEx_invoice_*.CSV
+    python3 tools/fedex_invoice_validate.py --edi-940 940s/ FedEx_invoice_*.CSV
 """
 
 import argparse
@@ -101,6 +109,57 @@ def ref_candidates(*refs):
             if m:
                 out.append(m.group(1))
     return list(dict.fromkeys(out))
+
+# 940 N9*DP / N9*IA marketplace names -> channel codes used by channel_keys.
+MARKETPLACE_CHANNELS = [
+    (r"target", "TARG"), (r"walmart", "WALC"), (r"wayfair", "WAYF"),
+    (r"macy", "MACY"), (r"kohl", "KOHLS"), (r"amazon", "AMZC"),
+    (r"shopify|shipstation", "SHIPSTATION"),
+]
+
+
+def read_940s(paths):
+    """Order number -> marketplace name from Stedi 940 JSON files."""
+    files = []
+    for path in paths:
+        if os.path.isdir(path):
+            files += [os.path.join(path, n) for n in sorted(os.listdir(path)) if n.lower().endswith(".json")]
+        else:
+            files.append(path)
+
+    found = {}
+
+    def walk(node):
+        if isinstance(node, list):
+            for n in node:
+                walk(n)
+        elif isinstance(node, dict):
+            head = node.get("heading")
+            if isinstance(head, dict) and "shipping_order_identification_W05" in head:
+                w05 = head["shipping_order_identification_W05"]
+                n9 = {}
+                for key, val in head.items():
+                    if key.startswith("reference_identification_N9"):
+                        for ref in val if isinstance(val, list) else [val]:
+                            n9.setdefault(ref.get("reference_identification_qualifier_01"),
+                                          ref.get("reference_identification_02"))
+                name = n9.get("DP") or n9.get("IA")
+                if name:
+                    for key in ("depositor_order_number_02", "purchase_order_number_03"):
+                        if w05.get(key):
+                            found[str(w05[key]).strip()] = name
+            else:
+                for v in node.values():
+                    walk(v)
+
+    for path in files:
+        with open(path) as f:
+            walk(json.load(f))
+    return found
+
+
+def marketplace_channel(name):
+    return next((c for pat, c in MARKETPLACE_CHANNELS if re.search(pat, name, re.I)), name)
 
 
 def read_invoice(paths):
@@ -216,9 +275,12 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("invoices", nargs="+", help="FedEx invoice CSV export(s)")
     ap.add_argument("--out-dir", default=".", help="where to write the result CSVs")
+    ap.add_argument("--edi-940", nargs="*", default=[], metavar="PATH",
+                    help="Stedi 940 JSON files or directories, for orders with no 945")
     args = ap.parse_args()
 
     rows = read_invoice(args.invoices)
+    orders_940 = read_940s(args.edi_940)
     if not rows:
         sys.exit("No invoice lines with a tracking ID found.")
 
@@ -237,6 +299,11 @@ def main():
         ch = next((c for pat, c in SHIP_TO_CHANNELS if re.search(pat, r["ship_to_945"], re.I)), None)
         if ch:
             r.update(channel=ch, resolution="ship_to")
+            continue
+        if r["resolution"] == "not_in_945":
+            hit = next((ref for ref in refs if ref in orders_940), None)
+            if hit:
+                r.update(channel=marketplace_channel(orders_940[hit]), resolution="940", order_number=hit)
 
     os.makedirs(args.out_dir, exist_ok=True)
     fields = list(rows[0].keys())
@@ -246,7 +313,7 @@ def main():
         w = csv.DictWriter(f, fields)
         w.writeheader()
         w.writerows(rows)
-    missing = [r for r in rows if r["resolution"] not in ("resolved", "reship", "replacement", "ship_to")]
+    missing = [r for r in rows if r["resolution"] not in ("resolved", "reship", "replacement", "ship_to", "940")]
     with open(miss_path, "w", newline="") as f:
         w = csv.DictWriter(f, fields)
         w.writeheader()
@@ -284,6 +351,17 @@ def main():
         for r in sorted(off_945, key=lambda r: r["order_number"]):
             print(f"  order={r['order_number']:<18} {r['channel'] or '(none)':<12} trk={r['tracking_id']:<13}"
                   f" 945 ship {r['ship_date_945']}  ${r['net_charge']:>7}")
+
+    by_940 = [r for r in rows if r["resolution"] == "940"]
+    if by_940:
+        print()
+        print(f"No 945, marketplace from the 940 (shipped but never confirmed): {len(by_940)} lines")
+        for r in sorted(by_940, key=lambda r: r["order_number"]):
+            print(f"  order={r['order_number']:<18} -> {r['channel']:<12} trk={r['tracking_id']:<13}"
+                  f" ${r['net_charge']:>7}")
+    elif args.edi_940 == [] and any(r["resolution"] == "not_in_945" for r in rows):
+        print()
+        print("Lines with no 945 can be resolved from their 940s: rerun with --edi-940 <files or dir>.")
 
     by_ship_to = [r for r in rows if r["resolution"] == "ship_to"]
     if by_ship_to:
