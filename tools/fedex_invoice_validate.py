@@ -9,11 +9,16 @@ Match order, first hit wins:
   1. FedEx tracking ID   = 945 cartonTracking
   2. FedEx Customer Ref  = 945 ssccBarcode  (the label's SSCC)
 
+Reships: the warehouse cannot process the same order number twice, so a
+reship goes out as the original order number plus `R`, `R<n>` or `*<n>`
+(27402R2, 4791738745R). A line whose 945 order number or FedEx reference has
+that shape, and whose base is a known marketplace order, is resolved to that
+marketplace with resolution `reship` and `reship_of` set to the original order.
+
 Any line whose order still has no marketplace is then given a *suggested*
 channel by looking its FedEx references (Ref#2, Ref#3/PO) up in
 `warehouse.channel_keys` after stripping the decorations warehouses add:
-`AME*`/`AMS*` prefixes, `-A` carton suffixes, `R`/`R2` reship suffixes,
-`RPL-<order>-<hash>` replacements and `WHS-<n>-<po>` store shipments. A
+`AME*`/`AMS*` prefixes, `-A` carton suffixes, `RPL-<order>-<hash>` replacements and `WHS-<n>-<po>` store shipments. A
 suggestion is a lead to confirm, not a resolution.
 
 Read-only: it only runs SELECT queries, so the session's read-only BigQuery
@@ -45,18 +50,30 @@ REF1 = "Original Customer Reference"
 REF2 = "Original Ref#2"
 REF3 = "Original Ref#3/PO Number"
 
+# Original order number + R, R<n> or *<n>: a reship of that order.
+RESHIP = r"^(.+?)(?:R\d*|\*\d+)$"
+
+
+def clean_refs(*refs):
+    """FedEx references with the warehouse's `AME*`/`AMS*` prefix removed."""
+    for ref in refs:
+        ref = (ref or "").strip()
+        if ref and ref.upper() not in ("NONE", "NO REFERENCE INFORMATION"):
+            yield re.sub(r"^[A-Z]{3}\*", "", ref)
+
+
+def reship_bases(*refs):
+    """Original order numbers that reship-shaped references point back to."""
+    return list(dict.fromkeys(m.group(1) for ref in clean_refs(*refs)
+                              if (m := re.match(RESHIP, ref))))
+
 
 def ref_candidates(*refs):
     """Order keys a warehouse may have hidden inside a FedEx reference."""
     out = []
-    for ref in refs:
-        ref = (ref or "").strip()
-        if not ref or ref.upper() in ("NONE", "NO REFERENCE INFORMATION"):
-            continue
-        ref = re.sub(r"^[A-Z]{3}\*", "", ref)
+    for ref in clean_refs(*refs):
         out.append(ref)
         for pat in (r"^(.+?)-[A-Z]$",           # 4794150206-A
-                    r"^(.+?)R\d*$",             # 4791738745R, 27402R2
                     r"^RPL-(\d+)-",             # RPL-26532-3E103AD6
                     r"^WHS-\d+-(\d+)$"):        # WHS-10545-45628836
             m = re.match(pat, ref)
@@ -92,14 +109,19 @@ def sql_str(s):
     return "'" + s.replace("\\", "\\\\").replace("'", "\\'") + "'"
 
 
+def sql_array(items):
+    return f"ARRAY<STRING>[{','.join(sql_str(c) for c in items)}]"
+
+
 def build_query(rows):
     structs = ",".join(
         f"({i},{sql_str(r['tracking_id'])},{sql_str(r['ref1'])},"
-        f"ARRAY<STRING>[{','.join(sql_str(c) for c in ref_candidates(r['ref2'], r['ref3_po']))}])"
+        f"{sql_array(ref_candidates(r['ref2'], r['ref3_po']))},"
+        f"{sql_array(reship_bases(r['ref2'], r['ref3_po']))})"
         for i, r in rows)
     return f"""
 WITH inv AS (
-  SELECT * FROM UNNEST(ARRAY<STRUCT<i INT64, trk STRING, ref1 STRING, cands ARRAY<STRING>>>[{structs}])),
+  SELECT * FROM UNNEST(ARRAY<STRUCT<i INT64, trk STRING, ref1 STRING, cands ARRAY<STRING>, rbases ARRAY<STRING>>>[{structs}])),
 rec AS (
   SELECT DISTINCT cartonTracking, ssccBarcode, orderNumber, channel, resolutionStatus,
          ARRAY_TO_STRING(candidateChannels, '+') AS candidateChannels, warehouse, carrierScac, shipDate
@@ -112,8 +134,9 @@ sug AS (
   SELECT inv.i, STRING_AGG(DISTINCT ck.channel, '+' ORDER BY ck.channel) AS suggested,
          STRING_AGG(DISTINCT ck.k, '+' ORDER BY ck.k) AS suggested_key
   FROM inv, UNNEST(inv.cands) c JOIN {CHANNEL_KEYS} ck ON ck.k = c
-  GROUP BY 1)
-SELECT inv.i,
+  GROUP BY 1),
+m AS (
+SELECT inv.i, inv.rbases,
   CASE WHEN t.orderNumber IS NOT NULL THEN 'tracking'
        WHEN s.orderNumber IS NOT NULL THEN 'sscc' END AS matched_on,
   COALESCE(t.orderNumber, s.orderNumber) AS order_number,
@@ -127,7 +150,22 @@ SELECT inv.i,
 FROM inv
 LEFT JOIN by_trk t ON t.cartonTracking = inv.trk
 LEFT JOIN by_sscc s ON t.orderNumber IS NULL AND inv.ref1 != '' AND s.ssccBarcode = inv.ref1
-LEFT JOIN sug USING (i)
+LEFT JOIN sug USING (i)),
+-- Reships: strip R / R<n> / *<n> from the 945 order number (or take the base
+-- already stripped from the FedEx refs) and look the original order up.
+rs AS (
+  SELECT m.i, STRING_AGG(DISTINCT ck.channel, '+' ORDER BY ck.channel) AS ch,
+         STRING_AGG(DISTINCT ck.k, '+' ORDER BY ck.k) AS base
+  FROM m, UNNEST(ARRAY_CONCAT(m.rbases,
+         IF(m.order_number IS NULL, [], [REGEXP_EXTRACT(m.order_number, r'{RESHIP}')]))) b
+  JOIN {CHANNEL_KEYS} ck ON ck.k = b
+  WHERE m.resolution != 'resolved'
+  GROUP BY 1)
+SELECT m.* EXCEPT (rbases, channel, resolution),
+  IF(rs.ch IS NOT NULL AND NOT CONTAINS_SUBSTR(rs.ch, '+'), rs.ch, m.channel) AS channel,
+  IF(rs.ch IS NOT NULL AND NOT CONTAINS_SUBSTR(rs.ch, '+'), 'reship', m.resolution) AS resolution,
+  rs.base AS reship_of
+FROM m LEFT JOIN rs USING (i)
 """
 
 
@@ -167,7 +205,7 @@ def main():
         w = csv.DictWriter(f, fields)
         w.writeheader()
         w.writerows(rows)
-    missing = [r for r in rows if r["resolution"] != "resolved"]
+    missing = [r for r in rows if r["resolution"] not in ("resolved", "reship")]
     with open(miss_path, "w", newline="") as f:
         w = csv.DictWriter(f, fields)
         w.writeheader()
@@ -188,6 +226,14 @@ def main():
         net = sum(r["net_charge"] for r in rs)
         orders = len({r["order_number"] for r in rs if r["order_number"]})
         print(f"{ch:<14}{len(rs):>7}{orders:>8}{net:>14,.2f}{net / len(rs):>10,.2f}")
+
+    reships = [r for r in rows if r["resolution"] == "reship"]
+    if reships:
+        print()
+        print(f"Reships resolved to the original order's marketplace: {len(reships)} lines")
+        for r in sorted(reships, key=lambda r: r["order_number"] or r["ref2"]):
+            print(f"  {r['order_number'] or r['ref2']:<18} -> {r['channel']:<12} reship of {r['reship_of']:<16}"
+                  f" trk={r['tracking_id']:<13} ${r['net_charge']:>7}")
 
     print()
     print(f"Orders with no marketplace identifier: {len({(r['order_number'] or r['tracking_id']) for r in missing})}"
