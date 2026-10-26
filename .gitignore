@@ -5,3 +5,6 @@ __pycache__/
 
 # Loader scratch output (tools/stamps_shipping_costs_load.py prepare)
 stamps_rows.jsonl
+
+# Loader scratch output (tools/stedi_940_load.py fetch)
+stedi_940_rows.jsonl

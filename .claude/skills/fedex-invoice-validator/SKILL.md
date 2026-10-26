@@ -19,7 +19,7 @@ and says which marketplace each charge belongs to.
 
 ```bash
 python3 tools/fedex_invoice_validate.py --out-dir <scratchpad>/fedex <invoice.csv> [more.csv ...]
-# once the user supplies 940s for the orders with no 945:
+# 940s come from BigQuery / Stedi automatically; pasted 940 JSON can be added with:
 python3 tools/fedex_invoice_validate.py --edi-940 <940 json files or dir> --out-dir <scratchpad>/fedex <invoice.csv>
 ```
 
@@ -59,13 +59,16 @@ ship to "Wayfair Store …", "Wayfair Warehouse …" or "CastleGate Warehouse �
 so they resolve to Wayfair. Add new names to `SHIP_TO_CHANNELS` in the script.
 
 **No 945 → check the 940.** If a line has no 945 at all, the marketplace comes
-from the order's 940 (warehouse shipping order). 940s are **not in BigQuery**,
-so ask the user for them (Stedi JSON, one file per order or a folder) and rerun
-with `--edi-940 <files or dir>`. The script matches the 940's W05 depositor/PO
-number to the FedEx references and reads the marketplace from `N9*DP`
-(department, e.g. "Target"), else `N9*IA`. These lines resolve as `940`, and
-are also a finding: the order went to the warehouse but its shipment was never
-confirmed with a 945.
+from the order's 940 (warehouse shipping order): the 940's W05 depositor/PO
+number is matched to the FedEx references and the marketplace read from
+`N9*IT` (`ACNDA_TGTPL` Target, `AMAZON.COM`, `WAYFAIR LLC`, `SHOPIFY`,
+`WALMARTCOM`, `MACYS`). The script looks in, first hit wins:
+1. BigQuery `warehouse.shipments_940` (see `docs/stedi-940-shipping-orders.md`);
+2. the Stedi API by order number, automatically when `STEDI_API_KEY` is set —
+   this also covers 940s sent since the last load;
+3. Stedi 940 JSON the user supplies with `--edi-940 <files or dir>`.
+These lines resolve as `940`, and are also a finding: the order went to the
+warehouse but no 945 came back.
 
 Reships, replacements, ship-to and 940 matches count toward their marketplace;
 they are not orders without a marketplace.

@@ -30,11 +30,14 @@ Columbus" on the CG... Wayfair store/warehouse orders — resolves to that
 marketplace with resolution `ship_to`.
 
 940s: a line with no 945 at all is looked up in the 940 warehouse shipping
-orders passed with --edi-940 (Stedi JSON, as files or directories). The 940's
-W05 depositor / PO number is matched to the FedEx references, and the
-marketplace is read from its N9*DP department (else N9*IA). Resolution `940`:
-the order was sent to the warehouse but its shipment was never confirmed.
-940s are not in BigQuery, so they have to be supplied.
+orders, matching the 940's W05 depositor / PO number to the FedEx references.
+The marketplace is the 940's N9*IT (ACNDA_TGTPL, AMAZON.COM, WAYFAIR LLC,
+SHOPIFY, ...; N9*DP 'Target' too). Sources, first hit wins:
+  1. BigQuery `warehouse.shipments_940` (loaded by tools/stedi_940_load.py)
+  2. the Stedi Core API, by order number, when STEDI_API_KEY is set - covers
+     940s sent since the last load
+  3. Stedi 940 JSON files passed with --edi-940
+Resolution `940`: the order went to the warehouse but no 945 came back.
 
 Any line whose order still has no marketplace is then given a *suggested*
 channel by looking its FedEx references (Ref#2, Ref#3/PO) up in
@@ -59,6 +62,9 @@ import re
 import subprocess
 import sys
 from decimal import Decimal
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import stedi_940_load as s940  # noqa: E402
 
 PROJECT = "americanflat"
 RECON = f"`{PROJECT}.finance.shipment_reconciliation`"
@@ -110,16 +116,74 @@ def ref_candidates(*refs):
                 out.append(m.group(1))
     return list(dict.fromkeys(out))
 
-# 940 N9*DP / N9*IA marketplace names -> channel codes used by channel_keys.
-MARKETPLACE_CHANNELS = [
-    (r"target", "TARG"), (r"walmart", "WALC"), (r"wayfair", "WAYF"),
-    (r"macy", "MACY"), (r"kohl", "KOHLS"), (r"amazon", "AMZC"),
-    (r"shopify|shipstation", "SHIPSTATION"),
-]
+# 940 N9*IT -> channel codes used by warehouse.channel_keys. Keep in step with
+# the warehouse.shipments_940 view (schemas/shipments_940_raw.sql).
+CHANNEL_940 = {
+    "ACNDA_TGTPL": "TARG", "AMAZON.COM": "AMZC", "AMAZON.VC": "AMZVC",
+    "AMAZON.FBA": "AMZFBA", "WAYFAIR LLC": "WAYF", "SHOPIFY": "SHIPSTATION",
+    "WALMARTCOM": "WALC", "MACYS": "MACY", "KOHLS": "KOHLS",
+}
 
 
-def read_940s(paths):
-    """Order number -> marketplace name from Stedi 940 JSON files."""
+def channel_940(it, dp):
+    if it == "ACNDA_TGTPL" or (dp or "").lower() == "target":
+        return "TARG"
+    return CHANNEL_940.get(it or "", it or dp or "")
+
+
+def order_keys_940(doc):
+    """(order numbers, channel) from one Stedi 940 JSON document."""
+    head = doc.get("heading") or {}
+    w05 = head.get("shipping_order_identification_W05") or {}
+    n9 = s940.n9_map(head)
+    keys = [str(w05[k]).strip() for k in ("depositor_order_number_02", "purchase_order_number_03") if w05.get(k)]
+    return keys, channel_940(n9.get("IT"), n9.get("DP"))
+
+
+def lookup_940(keys, files):
+    """Order key -> (channel, source) for keys that have a 940."""
+    found = {}
+    keys = list(dict.fromkeys(k for k in keys if k))
+
+    p = subprocess.run(
+        ["bq", "query", f"--project_id={PROJECT}", "--use_legacy_sql=false", "--format=json", "--quiet",
+         "--parameter=keys:ARRAY<STRING>:" + json.dumps(keys),
+         f"SELECT depositorOrderNumber d, purchaseOrderNumber p, channel FROM `{PROJECT}.warehouse.shipments_940` "
+         f"WHERE depositorOrderNumber IN UNNEST(@keys) OR purchaseOrderNumber IN UNNEST(@keys) "
+         f"ORDER BY processedAt"],
+        capture_output=True, text=True) if keys else None
+    if p and p.returncode == 0:
+        for r in json.loads(p.stdout or "[]"):
+            for k in (r.get("d"), r.get("p")):
+                if k in keys:
+                    found[k] = (r["channel"], "bigquery")
+
+    todo = [k for k in keys if k not in found]
+    if todo and (os.environ.get("STEDI_API_KEY") or os.environ.get("STEDI_API_KEY_FILE")):
+        key = s940.stedi_key()
+        for k in todo:
+            items = s940.api(f"transactions?businessIdentifier={k}", key).get("items", [])
+            sent = [x for x in items if x.get("direction") == "OUTBOUND" and str(
+                (((x.get("x12") or {}).get("metadata") or {}).get("transaction") or {})
+                .get("transactionSetIdentifier")) == "940"]
+            for x in sorted(sent, key=lambda x: x["processedAt"], reverse=True):
+                url = next((a["url"] for a in x.get("artifacts", []) if a.get("artifactType") == "application/json"), None)
+                if url:
+                    ks, ch = order_keys_940(json.loads(s940.artifact(url, key)))
+                    if k in ks and ch:
+                        found[k] = (ch, "stedi")
+                        break
+
+    for doc in read_940_files(files):
+        ks, ch = order_keys_940(doc)
+        for k in ks:
+            if k in keys and k not in found and ch:
+                found[k] = (ch, "file")
+    return found
+
+
+def read_940_files(paths):
+    """Every 940 document in Stedi JSON files / directories."""
     files = []
     for path in paths:
         if os.path.isdir(path):
@@ -127,27 +191,15 @@ def read_940s(paths):
         else:
             files.append(path)
 
-    found = {}
+    docs = []
 
     def walk(node):
         if isinstance(node, list):
             for n in node:
                 walk(n)
         elif isinstance(node, dict):
-            head = node.get("heading")
-            if isinstance(head, dict) and "shipping_order_identification_W05" in head:
-                w05 = head["shipping_order_identification_W05"]
-                n9 = {}
-                for key, val in head.items():
-                    if key.startswith("reference_identification_N9"):
-                        for ref in val if isinstance(val, list) else [val]:
-                            n9.setdefault(ref.get("reference_identification_qualifier_01"),
-                                          ref.get("reference_identification_02"))
-                name = n9.get("DP") or n9.get("IA")
-                if name:
-                    for key in ("depositor_order_number_02", "purchase_order_number_03"):
-                        if w05.get(key):
-                            found[str(w05[key]).strip()] = name
+            if isinstance(node.get("heading"), dict) and "shipping_order_identification_W05" in node["heading"]:
+                docs.append(node)
             else:
                 for v in node.values():
                     walk(v)
@@ -155,11 +207,7 @@ def read_940s(paths):
     for path in files:
         with open(path) as f:
             walk(json.load(f))
-    return found
-
-
-def marketplace_channel(name):
-    return next((c for pat, c in MARKETPLACE_CHANNELS if re.search(pat, name, re.I)), name)
+    return docs
 
 
 def read_invoice(paths):
@@ -280,7 +328,6 @@ def main():
     args = ap.parse_args()
 
     rows = read_invoice(args.invoices)
-    orders_940 = read_940s(args.edi_940)
     if not rows:
         sys.exit("No invoice lines with a tracking ID found.")
 
@@ -300,13 +347,21 @@ def main():
         if ch:
             r.update(channel=ch, resolution="ship_to")
             continue
-        if r["resolution"] == "not_in_945":
-            hit = next((ref for ref in refs if ref in orders_940), None)
+
+    no_945 = [r for r in rows if r["resolution"] == "not_in_945"]
+    if no_945:
+        refs = {r["tracking_id"]: list(clean_refs(r["ref2"], r["ref3_po"])) for r in no_945}
+        orders_940 = lookup_940([k for ks in refs.values() for k in ks], args.edi_940)
+        for r in no_945:
+            hit = next((k for k in refs[r["tracking_id"]] if k in orders_940), None)
             if hit:
-                r.update(channel=marketplace_channel(orders_940[hit]), resolution="940", order_number=hit)
+                ch, src = orders_940[hit]
+                r.update(channel=ch, resolution="940", order_number=hit, source_940=src)
 
     os.makedirs(args.out_dir, exist_ok=True)
-    fields = list(rows[0].keys())
+    fields = list(dict.fromkeys(k for r in rows for k in r))
+    for r in rows:
+        r.setdefault("source_940", "")
     all_path = os.path.join(args.out_dir, "fedex_validation_lines.csv")
     miss_path = os.path.join(args.out_dir, "fedex_orders_without_marketplace.csv")
     with open(all_path, "w", newline="") as f:
@@ -358,10 +413,7 @@ def main():
         print(f"No 945, marketplace from the 940 (shipped but never confirmed): {len(by_940)} lines")
         for r in sorted(by_940, key=lambda r: r["order_number"]):
             print(f"  order={r['order_number']:<18} -> {r['channel']:<12} trk={r['tracking_id']:<13}"
-                  f" ${r['net_charge']:>7}")
-    elif args.edi_940 == [] and any(r["resolution"] == "not_in_945" for r in rows):
-        print()
-        print("Lines with no 945 can be resolved from their 940s: rerun with --edi-940 <files or dir>.")
+                  f" ${r['net_charge']:>7}  (940 from {r['source_940']})")
 
     by_ship_to = [r for r in rows if r["resolution"] == "ship_to"]
     if by_ship_to:
