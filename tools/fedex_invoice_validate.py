@@ -20,6 +20,11 @@ ref: RPL-26516-00F30F25) is a Shopify replacement. It resolves to SHIPSTATION
 with resolution `replacement`; `original_order` is the order number between the
 dashes when a reference carries it.
 
+Ship-to: an order still without a marketplace whose 945 ship-to name (N1*ST)
+names the marketplace itself — "Wayfair Store Wilmette", "CastleGate Warehouse
+Columbus" on the CG... Wayfair store/warehouse orders — resolves to that
+marketplace with resolution `ship_to`.
+
 Any line whose order still has no marketplace is then given a *suggested*
 channel by looking its FedEx references (Ref#2, Ref#3/PO) up in
 `warehouse.channel_keys` after stripping the decorations warehouses add:
@@ -60,6 +65,11 @@ RESHIP = r"^(.+?)(?:R\d*|\*\d+)$"
 
 # RPL... order numbers are replacements sent for Shopify orders.
 REPLACEMENT_CHANNEL = "SHIPSTATION"
+
+# 945 ship-to names that identify the marketplace on their own.
+SHIP_TO_CHANNELS = [
+    (r"\b(wayfair|castle\s*gate)\b", "WAYF"),
+]
 
 
 def clean_refs(*refs):
@@ -131,7 +141,8 @@ WITH inv AS (
   SELECT * FROM UNNEST(ARRAY<STRUCT<i INT64, trk STRING, ref1 STRING, cands ARRAY<STRING>, rbases ARRAY<STRING>>>[{structs}])),
 rec AS (
   SELECT DISTINCT cartonTracking, ssccBarcode, orderNumber, channel, resolutionStatus,
-         ARRAY_TO_STRING(candidateChannels, '+') AS candidateChannels, warehouse, carrierScac, shipDate
+         ARRAY_TO_STRING(candidateChannels, '+') AS candidateChannels, warehouse, carrierScac, shipDate,
+         shipToName
   FROM {RECON}),
 by_trk AS (SELECT * FROM rec WHERE cartonTracking IS NOT NULL
            QUALIFY ROW_NUMBER() OVER (PARTITION BY cartonTracking ORDER BY orderNumber) = 1),
@@ -153,6 +164,7 @@ SELECT inv.i, inv.rbases,
   COALESCE(t.warehouse, s.warehouse) AS warehouse_945,
   COALESCE(t.carrierScac, s.carrierScac) AS carrier_945,
   CAST(COALESCE(t.shipDate, s.shipDate) AS STRING) AS ship_date_945,
+  COALESCE(t.shipToName, s.shipToName) AS ship_to_945,
   sug.suggested AS suggested_channel, sug.suggested_key
 FROM inv
 LEFT JOIN by_trk t ON t.cartonTracking = inv.trk
@@ -210,6 +222,10 @@ def main():
         if any(ref.upper().startswith("RPL") for ref in refs):
             orig = next((m.group(1) for ref in refs if (m := re.match(r"^RPL-(\d+)-", ref, re.I))), "")
             r.update(channel=REPLACEMENT_CHANNEL, resolution="replacement", original_order=orig)
+            continue
+        ch = next((c for pat, c in SHIP_TO_CHANNELS if re.search(pat, r["ship_to_945"], re.I)), None)
+        if ch:
+            r.update(channel=ch, resolution="ship_to")
 
     os.makedirs(args.out_dir, exist_ok=True)
     fields = list(rows[0].keys())
@@ -219,7 +235,7 @@ def main():
         w = csv.DictWriter(f, fields)
         w.writeheader()
         w.writerows(rows)
-    missing = [r for r in rows if r["resolution"] not in ("resolved", "reship", "replacement")]
+    missing = [r for r in rows if r["resolution"] not in ("resolved", "reship", "replacement", "ship_to")]
     with open(miss_path, "w", newline="") as f:
         w = csv.DictWriter(f, fields)
         w.writeheader()
@@ -248,6 +264,14 @@ def main():
         for r in sorted(reships, key=lambda r: (r["resolution"], r["order_number"] or r["ref2"])):
             print(f"  {r['order_number'] or r['ref2']:<18} -> {r['channel']:<12} {r['resolution']} of"
                   f" {r['original_order'] or '?':<12} trk={r['tracking_id']:<13} ${r['net_charge']:>7}")
+
+    by_ship_to = [r for r in rows if r["resolution"] == "ship_to"]
+    if by_ship_to:
+        print()
+        print(f"Resolved from the 945 ship-to name: {len(by_ship_to)} lines")
+        for r in sorted(by_ship_to, key=lambda r: r["order_number"]):
+            print(f"  {r['order_number']:<18} -> {r['channel']:<12} ship-to {r['ship_to_945']:<28}"
+                  f" trk={r['tracking_id']:<13} ${r['net_charge']:>7}")
 
     print()
     print(f"Orders with no marketplace identifier: {len({(r['order_number'] or r['tracking_id']) for r in missing})}"

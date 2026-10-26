@@ -46,11 +46,17 @@ reference `RPL-26516-00F30F25`) are replacements for Shopify orders. They
 resolve to SHIPSTATION (Shopify) as a `replacement`, with `original_order` set
 to the number between the dashes when a FedEx reference carries it.
 
-Reships and replacements count toward their marketplace; they are not orders
-without a marketplace.
+**Ship-to name.** If an order still has no marketplace but its 945 ship-to name
+names one, it resolves as `ship_to`. The `CG…` orders (e.g. `CG100126SCWF1`)
+ship to "Wayfair Store …", "Wayfair Warehouse …" or "CastleGate Warehouse …",
+so they resolve to Wayfair. Add new names to `SHIP_TO_CHANNELS` in the script.
+
+Reships, replacements and ship-to matches count toward their marketplace; they
+are not orders without a marketplace.
 
 Each line ends up `resolved` (one channel), `reship` / `replacement`
-(resolved through the original order), `unresolved` (in the 945s but the order number matches no
+(resolved through the original order), `ship_to` (resolved from the 945
+ship-to name), `unresolved` (in the 945s but the order number matches no
 marketplace), `ambiguous` (matches several), or `not_in_945` (no ship
 confirmation at all).
 
@@ -68,7 +74,6 @@ Present it as a suggestion, not a resolution.
 3. **Orders with no marketplace identifier** — always list them all, grouped:
    - has a suggested channel → usually a shipment missing from the 945 data.
    - internal (SAMPLE*, ShootSample*, PODTEST*, UGC-*) → company cost, no marketplace.
-   - warehouse-generated (e.g. `CG…WF…` store/wholesale shipments) → ask ops.
    - `not_in_945` with no references → shipped outside the warehouse (Kent's
      overnights, return labels); flag for review.
 4. Send `fedex_orders_without_marketplace.csv` (and the full
