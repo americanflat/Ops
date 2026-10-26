@@ -13,13 +13,18 @@ Reships: the warehouse cannot process the same order number twice, so a
 reship goes out as the original order number plus `R`, `R<n>` or `*<n>`
 (27402R2, 4791738745R). A line whose 945 order number or FedEx reference has
 that shape, and whose base is a known marketplace order, is resolved to that
-marketplace with resolution `reship` and `reship_of` set to the original order.
+marketplace with resolution `reship` and `original_order` set to that order.
+
+Replacements: an order number starting `RPL` (945: RPL2651600F30F25, FedEx
+ref: RPL-26516-00F30F25) is a Shopify replacement. It resolves to SHIPSTATION
+with resolution `replacement`; `original_order` is the order number between the
+dashes when a reference carries it.
 
 Any line whose order still has no marketplace is then given a *suggested*
 channel by looking its FedEx references (Ref#2, Ref#3/PO) up in
 `warehouse.channel_keys` after stripping the decorations warehouses add:
-`AME*`/`AMS*` prefixes, `-A` carton suffixes, `RPL-<order>-<hash>` replacements and `WHS-<n>-<po>` store shipments. A
-suggestion is a lead to confirm, not a resolution.
+`AME*`/`AMS*` prefixes, `-A` carton suffixes and `WHS-<n>-<po>` store
+shipments. A suggestion is a lead to confirm, not a resolution.
 
 Read-only: it only runs SELECT queries, so the session's read-only BigQuery
 credential is enough. Needs the `bq` CLI.
@@ -53,6 +58,9 @@ REF3 = "Original Ref#3/PO Number"
 # Original order number + R, R<n> or *<n>: a reship of that order.
 RESHIP = r"^(.+?)(?:R\d*|\*\d+)$"
 
+# RPL... order numbers are replacements sent for Shopify orders.
+REPLACEMENT_CHANNEL = "SHIPSTATION"
+
 
 def clean_refs(*refs):
     """FedEx references with the warehouse's `AME*`/`AMS*` prefix removed."""
@@ -74,7 +82,6 @@ def ref_candidates(*refs):
     for ref in clean_refs(*refs):
         out.append(ref)
         for pat in (r"^(.+?)-[A-Z]$",           # 4794150206-A
-                    r"^RPL-(\d+)-",             # RPL-26532-3E103AD6
                     r"^WHS-\d+-(\d+)$"):        # WHS-10545-45628836
             m = re.match(pat, ref)
             if m:
@@ -164,7 +171,7 @@ rs AS (
 SELECT m.* EXCEPT (rbases, channel, resolution),
   IF(rs.ch IS NOT NULL AND NOT CONTAINS_SUBSTR(rs.ch, '+'), rs.ch, m.channel) AS channel,
   IF(rs.ch IS NOT NULL AND NOT CONTAINS_SUBSTR(rs.ch, '+'), 'reship', m.resolution) AS resolution,
-  rs.base AS reship_of
+  rs.base AS original_order
 FROM m LEFT JOIN rs USING (i)
 """
 
@@ -196,6 +203,13 @@ def main():
     for start in range(0, len(indexed), CHUNK):
         for m in run_bq(build_query(indexed[start:start + CHUNK])):
             rows[int(m.pop("i"))].update({k: v or "" for k, v in m.items()})
+    for r in rows:
+        if r["resolution"] in ("resolved", "reship"):
+            continue
+        refs = [r["order_number"], *clean_refs(r["ref2"], r["ref3_po"])]
+        if any(ref.upper().startswith("RPL") for ref in refs):
+            orig = next((m.group(1) for ref in refs if (m := re.match(r"^RPL-(\d+)-", ref, re.I))), "")
+            r.update(channel=REPLACEMENT_CHANNEL, resolution="replacement", original_order=orig)
 
     os.makedirs(args.out_dir, exist_ok=True)
     fields = list(rows[0].keys())
@@ -205,7 +219,7 @@ def main():
         w = csv.DictWriter(f, fields)
         w.writeheader()
         w.writerows(rows)
-    missing = [r for r in rows if r["resolution"] not in ("resolved", "reship")]
+    missing = [r for r in rows if r["resolution"] not in ("resolved", "reship", "replacement")]
     with open(miss_path, "w", newline="") as f:
         w = csv.DictWriter(f, fields)
         w.writeheader()
@@ -227,13 +241,13 @@ def main():
         orders = len({r["order_number"] for r in rs if r["order_number"]})
         print(f"{ch:<14}{len(rs):>7}{orders:>8}{net:>14,.2f}{net / len(rs):>10,.2f}")
 
-    reships = [r for r in rows if r["resolution"] == "reship"]
+    reships = [r for r in rows if r["resolution"] in ("reship", "replacement")]
     if reships:
         print()
-        print(f"Reships resolved to the original order's marketplace: {len(reships)} lines")
-        for r in sorted(reships, key=lambda r: r["order_number"] or r["ref2"]):
-            print(f"  {r['order_number'] or r['ref2']:<18} -> {r['channel']:<12} reship of {r['reship_of']:<16}"
-                  f" trk={r['tracking_id']:<13} ${r['net_charge']:>7}")
+        print(f"Reships and replacements, resolved through the original order: {len(reships)} lines")
+        for r in sorted(reships, key=lambda r: (r["resolution"], r["order_number"] or r["ref2"])):
+            print(f"  {r['order_number'] or r['ref2']:<18} -> {r['channel']:<12} {r['resolution']} of"
+                  f" {r['original_order'] or '?':<12} trk={r['tracking_id']:<13} ${r['net_charge']:>7}")
 
     print()
     print(f"Orders with no marketplace identifier: {len({(r['order_number'] or r['tracking_id']) for r in missing})}"

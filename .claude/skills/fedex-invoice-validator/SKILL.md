@@ -39,17 +39,24 @@ reship is sent as the original marketplace order number followed by `R`, `R`
 plus a number, or `*` plus a number (`27402R2`, `4791738745R`). When the 945
 order number or a FedEx reference has that shape and the part before the
 suffix is a known marketplace order, the line is resolved to that marketplace
-as a `reship`, with `reship_of` naming the original order. Reships count
-toward their marketplace; they are not orders without a marketplace.
+as a `reship`, with `original_order` naming the original order.
 
-Each line ends up `resolved` (one channel), `reship` (resolved through the
-original order), `unresolved` (in the 945s but the order number matches no
+**Replacements.** Order numbers starting `RPL` (945 `RPL2651600F30F25`, FedEx
+reference `RPL-26516-00F30F25`) are replacements for Shopify orders. They
+resolve to SHIPSTATION (Shopify) as a `replacement`, with `original_order` set
+to the number between the dashes when a FedEx reference carries it.
+
+Reships and replacements count toward their marketplace; they are not orders
+without a marketplace.
+
+Each line ends up `resolved` (one channel), `reship` / `replacement`
+(resolved through the original order), `unresolved` (in the 945s but the order number matches no
 marketplace), `ambiguous` (matches several), or `not_in_945` (no ship
 confirmation at all).
 
 For anything still without a marketplace, the script looks FedEx Ref#2 / Ref#3
 up in `channel_keys` after stripping warehouse decorations (`AME*`/`AMS*`,
-`-A`, `RPL-<order>-…`, `WHS-<n>-<po>`) and prints a **suggested** channel.
+`-A`, `WHS-<n>-<po>`) and prints a **suggested** channel.
 Present it as a suggestion, not a resolution.
 
 ## What to report back
@@ -57,9 +64,9 @@ Present it as a suggestion, not a resolution.
 1. Headline: lines, invoices, total net charge (must equal the sum of the
    invoices' `Net Charge Amount`), and the match breakdown.
 2. The marketplace table (lines, orders, net charge, avg per line), then the
-   reships with the original order each one belongs to.
+   reships and replacements with the original order each one belongs to.
 3. **Orders with no marketplace identifier** — always list them all, grouped:
-   - has a suggested channel → likely a replacement (`RPL-`) or a 945 gap; say which.
+   - has a suggested channel → usually a shipment missing from the 945 data.
    - internal (SAMPLE*, ShootSample*, PODTEST*, UGC-*) → company cost, no marketplace.
    - warehouse-generated (e.g. `CG…WF…` store/wholesale shipments) → ask ops.
    - `not_in_945` with no references → shipped outside the warehouse (Kent's
