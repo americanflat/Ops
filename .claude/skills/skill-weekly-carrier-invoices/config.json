@@ -1,0 +1,20 @@
+{
+  "ap_recipient": {
+    "name": "Georgina Gallo",
+    "slack_user_id": "U07B8VAF872",
+    "email": "georgina@americanflat.com"
+  },
+  "sheets": {
+    "fedex": "https://docs.google.com/spreadsheets/d/1kqH83XoWo9RkOgqVlYOcdbORpEtnQhFBkNksxkjvvQE",
+    "stamps": "https://docs.google.com/spreadsheets/d/1z9phKaTD2LZygyoJKHOrvzNHqjPJr8zgfVHB37i60Pk",
+    "dashboard_data": "https://docs.google.com/spreadsheets/d/1E13ssQaC5l1V1RKVi6Ew13o8i-gBXE1CUmAoKdLnoPI"
+  },
+  "last_stamps_account": "1003346887",
+  "bigquery": {
+    "project_id": "americanflat",
+    "dataset": "finance",
+    "table": "fedex_shipping_costs",
+    "impersonate_service_account": "invoice-writer@americanflat.iam.gserviceaccount.com",
+    "location": "US"
+  }
+}
