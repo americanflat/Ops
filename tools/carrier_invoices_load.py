@@ -317,9 +317,14 @@ class BQ:
 
     def query(self, sql):
         p = self.run(["query", "--use_legacy_sql=false", "--format=json", "--max_rows=10000", sql])
-        out = p.stdout.strip()
+        # bq can print warnings (e.g. "--scopes flag may not work") ahead of the JSON
+        # on stdout; read from the first line that starts the result array.
+        lines = p.stdout.splitlines()
+        start = next((i for i, l in enumerate(lines) if l.lstrip().startswith("[")), None)
+        if start is None:
+            return []
         try:
-            return json.loads(out) if out.startswith("[") else []
+            return json.loads("\n".join(lines[start:]))
         except json.JSONDecodeError:
             return []
 
@@ -327,7 +332,7 @@ class BQ:
         return self.run(["show", self.ref(table)], check=False).returncode == 0
 
 
-def ensure_tools():
+def ensure_tools(project):
     missing = [t for t in ("bq", "gcloud") if not shutil.which(t)]
     if missing:
         print(f"ERROR: {', '.join(missing)} not found. Install the Google Cloud CLI "
@@ -335,6 +340,16 @@ def ensure_tools():
         sys.exit(4)
     acct = subprocess.run(["gcloud", "config", "get-value", "account"],
                           capture_output=True, text=True).stdout.strip()
+    if not acct or acct == "(unset)":
+        # Token-based auth (e.g. a Claude Code cloud session) has no gcloud account;
+        # ask BigQuery who it is via a free dry-run job.
+        p = subprocess.run(["bq", f"--project_id={project}", "--format=json", "query", "--nouse_legacy_sql", "--dry_run", "SELECT 1"],
+                           capture_output=True, text=True)
+        out = p.stdout[p.stdout.find("{"):] if "{" in p.stdout else ""
+        try:
+            acct = json.loads(out).get("user_email", "")
+        except json.JSONDecodeError:
+            acct = ""
     if not acct or acct == "(unset)":
         print("ERROR: no gcloud account. Run `gcloud auth login` once, then retry.")
         sys.exit(4)
@@ -377,8 +392,11 @@ def load_file(bq, kind, recs, meta, tmpdir, allow_overlap=False):
         pre = bq.query(f"SELECT COUNTIF(T.row_key IS NULL) AS new_rows, "
                        f"COUNTIF(T.row_key IS NOT NULL) AS existing_rows "
                        f"FROM {bq.fq(stg)} S LEFT JOIN {bq.fq(table)} T USING (row_key)")
-        new_rows = int(pre[0]["new_rows"]) if pre else None
-        existing = int(pre[0]["existing_rows"]) if pre else None
+        if not pre:
+            # Without the pre-check the overlap guard can't run; never merge blind.
+            raise RuntimeError("pre-merge row check returned nothing; refusing to merge")
+        new_rows = int(pre[0]["new_rows"])
+        existing = int(pre[0]["existing_rows"])
         # An issued invoice never gains lines. New rows for an invoice that's
         # already loaded mean the line key didn't recognize a re-export, and
         # merging would double-count it — stop before writing anything.
@@ -474,7 +492,7 @@ def main():
         print(f"\nDRY RUN — {len(parsed)} file(s) ready; nothing written.")
         sys.exit(rc)
 
-    acct = ensure_tools()
+    acct = ensure_tools(a.project)
     bq = BQ(a.project, a.dataset, a.location)
     try:
         if a.init:

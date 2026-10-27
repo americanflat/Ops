@@ -44,6 +44,15 @@ It writes **as the signed-in account** — no service-account hop. (As of
 directly, while impersonating `invoice-writer@` was denied, which is also why
 the Stamps loader was run with `--no-impersonate` that day.)
 
+With no gcloud account configured (e.g. a Claude Code cloud session, which
+authenticates `bq` with a token), the loader asks BigQuery for the caller's
+identity and records that as `loaded_by`. Don't override the account with
+`CLOUDSDK_CORE_ACCOUNT`: on 2026-10-27 that made `bq` print a warning ahead of
+its JSON, the loader read every query as empty, and the overlap guard and
+verify were skipped (the load itself was correct; its log row was fixed by
+hand). The loader now reads past such warnings and refuses to merge if its
+pre-merge check returns nothing.
+
 ```bash
 export PATH="$HOME/google-cloud-sdk/bin:$PATH"
 cd ~/Ops
