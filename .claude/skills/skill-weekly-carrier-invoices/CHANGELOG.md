@@ -2,6 +2,29 @@
 
 All notable changes to this skill will be documented in this file.
 
+## [0.2.0] - 2026-10-27
+
+### Changed
+- FedEx load now uses `scripts/carrier_invoices_load.py` (copied from `tools/carrier_invoices_load.py`
+  on the `claude/fedex-ups-shipping-costs-loaders` branch) with its schemas. It fills all 26
+  columns, keys rows on `row_key`, merges only new rows, verifies, and writes the load log.
+  Replaces `load_fedex_to_bq.py`, which matched only 7 of 26 columns and impersonated a
+  service account the cloud session can't use.
+- Loader fixes: reads query JSON even when `bq` prints warnings first (they had silently
+  disabled the pre-merge overlap guard and post-load verify); refuses to merge if the
+  pre-merge check returns nothing; finds the signed-in identity from BigQuery when gcloud
+  has no account (cloud sessions).
+- `process_invoices.py`: `--skip-fedex-invoices` and `--stamps-after` limit output to this
+  week's rows; strips the upload prefix from `Source File`.
+- `build_message.py`: Anthony's approved layout (markdown bold, M/D dates, Stamps.com "no action
+  needed" notice for tying the Auctane invoices); opens with an @-mention of the AP recipient's
+  Slack member ID;
+  `--ups-credit-note` adds the Yusen credit line; flags are internal and only included with
+  `--with-notes`.
+- SKILL.md: new steps for working out what's new (BigQuery), the UPS → Yusen (South Carolina)
+  check against the Gmail thread, and addressing people by Slack member ID. Sheets append is
+  now optional (the sheets stopped being updated on 2026-04-30).
+
 ## [0.1.0] - 2026-10-27
 
 ### Added

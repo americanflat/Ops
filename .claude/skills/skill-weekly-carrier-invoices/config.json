@@ -14,7 +14,15 @@
     "project_id": "americanflat",
     "dataset": "finance",
     "table": "fedex_shipping_costs",
-    "impersonate_service_account": "invoice-writer@americanflat.iam.gserviceaccount.com",
-    "location": "US"
+    "location": "US",
+    "log_table": "fedex_shipping_costs_load_log"
+  },
+  "people": {
+    "yusen_sc_billing": {
+      "name": "Leandra Murchison",
+      "email": "Leandra.Murchison@us.yusen-logistics.com",
+      "gmail_thread_subject": "South Carolina billing UPS account",
+      "slack_user_id": null
+    }
   }
 }
