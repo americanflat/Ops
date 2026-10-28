@@ -1,0 +1,6 @@
+[project]
+name = "skill-weekly-carrier-invoices"
+version = "0.2.0"
+description = "Weekly FedEx / UPS / Stamps.com invoice processing, FedEx BigQuery load, and AP message draft for Americanflat."
+requires-python = ">=3.9"
+dependencies = []

@@ -1,0 +1,18 @@
+[skill]
+name = "skill-weekly-carrier-invoices"
+version = "0.2.0"
+description = "Weekly carrier invoice routine for Americanflat: works out which FedEx, UPS, and Stamps.com invoices are new this week, loads FedEx into BigQuery (americanflat.finance.fedex_shipping_costs) after sign-off with the repo carrier loader, checks UPS South Carolina charges against the Yusen credit thread, and drafts the weekly AP message to Georgina Gallo as a Slack draft for review. Never sends or writes without approval; performs no IAM operations."
+owner = "Anthony Armstrong <anthony@americanflat.com>"
+tier = 2
+department = "operations"
+language = "python"
+
+[environment]
+requires_network = true
+requires_secrets = false
+stdlib_only = true
+python = ">=3.9"
+
+[compatibility]
+platforms = ["macos", "linux", "windows"]
+providers = ["claude-code"]

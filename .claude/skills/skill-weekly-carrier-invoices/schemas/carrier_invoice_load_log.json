@@ -1,0 +1,61 @@
+[
+ {
+  "name": "loaded_at",
+  "type": "TIMESTAMP",
+  "mode": "NULLABLE"
+ },
+ {
+  "name": "loaded_by",
+  "type": "STRING",
+  "mode": "NULLABLE"
+ },
+ {
+  "name": "source_file",
+  "type": "STRING",
+  "mode": "NULLABLE"
+ },
+ {
+  "name": "source_sha256",
+  "type": "STRING",
+  "mode": "NULLABLE"
+ },
+ {
+  "name": "carrier",
+  "type": "STRING",
+  "mode": "NULLABLE",
+  "description": "fedex / ups / stamps"
+ },
+ {
+  "name": "invoice_numbers",
+  "type": "STRING",
+  "mode": "NULLABLE",
+  "description": "Comma-separated (FedEx/UPS)"
+ },
+ {
+  "name": "rows_in_file",
+  "type": "INT64",
+  "mode": "NULLABLE"
+ },
+ {
+  "name": "rows_inserted",
+  "type": "INT64",
+  "mode": "NULLABLE"
+ },
+ {
+  "name": "rows_already_present",
+  "type": "INT64",
+  "mode": "NULLABLE"
+ },
+ {
+  "name": "file_amount",
+  "type": "NUMERIC",
+  "mode": "NULLABLE",
+  "description": "Line sum (FedEx/UPS) or amount paid (Stamps)"
+ },
+ {
+  "name": "status",
+  "type": "STRING",
+  "mode": "NULLABLE",
+  "description": "loaded / verify_failed"
+ }
+]
