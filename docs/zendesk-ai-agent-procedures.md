@@ -3,7 +3,7 @@
 Zendesk AI agents → Content → Use cases. To change a procedure, edit the text here, then paste the **whole** procedure into the **Update procedure** box. Pasting only part of it changes the flow in unexpected ways. Afterwards, check the canvas, then **Save version** and **Publish procedure**.
 
 Shared setup:
-- Integrations: **Shopify_Auth**, which gets the token (session params `token` and `expiresIn`), and **Shopify_Order_Lookup**, which looks up the order by number and email.
+- Integrations: **Shopify_Auth**, which gets the token (session params `token` and `expiresIn`), **Shopify_Order_Lookup**, which looks up the order by number and email, and **Shopify_Product_Search**, which searches the catalog (see section 5).
 - Session params from the lookup: order_name, order_status, shipment_status, carrier, tracking_number, tracking_url, estimated_delivery, delivered_at, package_count, all_package_statuses, payment_status, total_refunded, refund_count, last_refund_date, order_created_at, cancelled_at.
 - Only orders from the last 60 days can be found, because the `read_all_orders` permission wasn't granted.
 
@@ -130,3 +130,72 @@ Rules:
 ```
 
 **Related trigger:** *Flag urgent cancel and address requests* (category: AI agents). If a messaging ticket's comment text contains `URGENT CANCELLATION REQUEST` or `URGENT ADDRESS CHANGE`, it sets Priority to Urgent and adds the tag `cancel_or_change`. The transcript only reaches the ticket when the chat ends, so the flag can take about 15 minutes to appear.
+
+---
+
+## 5. Product questions
+
+**Use case description:** Customer asks whether we sell a product, which frame fits a certain print size, about stock, quantity or price, or about a product's material, glass, mat, hanging or fit.
+
+**Integration: Shopify_Product_Search**
+- `POST https://amflat.myshopify.com/admin/api/2026-10/graphql.json`, Authorization Custom → Shopify_Auth, headers `X-Shopify-Access-Token: {{apiToken}}` and `Content-Type: application/json`.
+- Request parameters: `product_search` (one or two keywords, for example "float", "shadow box", "Streamline") and `size` (format 8x10).
+- Body:
+
+```json
+{
+  "query": "query ProductSearch($productQ: String!, $variantQ: String!) { products(first: 5, query: $productQ) { nodes { title onlineStoreUrl productType material: metafield(namespace: \"afl\", key: \"material\") { value } summary: metafield(namespace: \"afl\", key: \"short_description\") { value } faq: metafield(namespace: \"custom\", key: \"question_and_answer\") { value } } } productVariants(first: 25, query: $variantQ) { nodes { title price availableForSale inventoryQuantity product { title onlineStoreUrl } } } }",
+  "variables": {
+    "productQ": "title:*{{product_search}}* status:active",
+    "variantQ": "{{product_search}} title:*{{size}}* product_status:active"
+  }
+}
+```
+
+The product search matches **titles only** (`title:*…*`). A plain keyword search also matches descriptions, so "Streamline" returned canvas prints instead of the Streamline frames. The size search includes the keyword, so it only returns sizes of the product asked about.
+
+| Scenario | Query |
+|---|---|
+| Success | `statusCode = 200 and ($count(data.data.products.nodes) > 0 or $count(data.data.productVariants.nodes) > 0)` |
+| Not Found | `statusCode = 200 and $count(data.data.products.nodes) = 0 and $count(data.data.productVariants.nodes) = 0` |
+| Failure | `statusCode != 200` |
+
+| Session parameter (on Success) | Query |
+|---|---|
+| `matching_products` | `data.data.products.nodes` |
+| `matching_sizes` | `data.data.productVariants.nodes` |
+
+**Procedure:**
+
+```
+1. Work out what the customer needs: the type of product (for example frame, float frame, shadow box, collage frame, poster frame, display case, easel), a product name if they gave one (for example Streamline, Hudson, Soho, Signature), the print or frame size, the color, whether they want a mat, and how many they need. Only ask for what's missing and actually matters for their question.
+
+2. Use the Shopify_Product_Search integration:
+- product_search: one or two short keywords for the product name or type, for example "float", "shadow", "collage", "poster", "Streamline", "easel". Use the word stem: "float" not "floater".
+- size: the size in the format 8x10, with no spaces or inch marks. If the question isn't about a particular size (for example material, glass or hanging), use 8x10 and ignore matching_sizes.
+
+3. Read the results:
+- matching_products: each product's title, link, material, summary and FAQ. Use the FAQ to answer questions about fit, glass or plexiglass, hanging and custom sizes.
+- matching_sizes: each size option with price, availableForSale and inventoryQuantity. In titles like "16x16 / Black / 12x12", the first size is the frame and the last size is the mat opening for the print. Only recommend options from the product type the customer asked about.
+
+4. Answer:
+- Recommend up to 3 options that match, with the product name, size, color, price and link.
+- Stock: if availableForSale is false, say that option is currently out of stock. If they need a quantity, compare it with inventoryQuantity and say how many are available now. Only give exact stock numbers when they ask about quantity or when fewer than 10 are left.
+- Restocks: we don't have restock dates. Suggest checking the product page again later, or our Amazon store, which sometimes has stock when our website doesn't. Never guess a date.
+- Custom sizes: we only sell standard sizes, not custom cuts.
+- Prices are in US dollars and can change; the product page shows the current price.
+
+5. If nothing matches (Not Found), say we don't currently carry that, and suggest the closest option if one of the results fits. Don't invent products.
+
+6. If they ask for a detail that isn't in the results (for example rabbet depth, border width or exact outer dimensions), say it isn't listed, share the product link, and ask if they'd like our team to check. If yes, summarize the product, size and question, and escalate to a team member.
+
+7. If they want a large or business order (for example 25 or more of one item, or for resale), take the products and quantities and escalate to a team member.
+
+8. If the search fails for any other reason, apologize, share https://americanflat.com, and offer to pass the question to our team.
+
+Rules:
+- Never invent a product, size, price, stock level, specification or restock date. Only use what the search returned.
+- Never tell the customer to email us, and never ask them to repeat something they already said.
+```
+
+**Tested 29 Oct 2026:** Streamline 20x20 silver (1 in stock, correct), floater 12x12 (Canvas Floating Frame out of stock, no restock date), Hudson rabbet depth (not listed, offers team check), Soho glass (answered from the product FAQ).
