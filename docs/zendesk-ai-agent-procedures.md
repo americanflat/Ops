@@ -199,4 +199,4 @@ Rules:
 - Never tell the customer to email us, and never ask them to repeat something they already said.
 ```
 
-**Tested 29 Oct 2026:** Streamline 20x20 silver (1 in stock, correct), floater 12x12 (Canvas Floating Frame out of stock, no restock date), Hudson rabbet depth (not listed, offers team check), Soho glass (answered from the product FAQ).
+**Tested 29 Oct 2026:** Streamline 20x20 silver (1 in stock; suggests Black $25.49 / 582 and White $22.94 / 315 instead), floater 12x12 (Canvas Floating Frame out of stock, no restock date), Hudson rabbet depth (not listed, offers team check), Soho glass (answered from the product FAQ).
