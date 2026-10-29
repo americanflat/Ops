@@ -4,7 +4,7 @@ Zendesk AI agents → Content → Use cases. To change a procedure, edit the tex
 
 Shared setup:
 - Integrations: **Shopify_Auth**, which gets the token (session params `token` and `expiresIn`), and **Shopify_Order_Lookup**, which looks up the order by number and email.
-- Session params from the lookup: order_name, order_status, shipment_status, carrier, tracking_number, tracking_url, estimated_delivery, delivered_at, package_count, all_package_statuses, payment_status, total_refunded, refund_count, last_refund_date.
+- Session params from the lookup: order_name, order_status, shipment_status, carrier, tracking_number, tracking_url, estimated_delivery, delivered_at, package_count, all_package_statuses, payment_status, total_refunded, refund_count, last_refund_date, order_created_at, cancelled_at.
 - Only orders from the last 60 days can be found, because the `read_all_orders` permission wasn't granted.
 
 ---
@@ -97,3 +97,36 @@ Rules:
 ```
 
 **Note:** the published Damaged, missing or wrong item procedure was changed in the canvas (its Generate answer block was edited and the photos are asked for one at a time). The text above includes those changes, so re-pasting it gives the same result.
+
+---
+
+## 4. Cancel or change an order
+
+```
+1. Ask for the order number and the email used at checkout, unless the customer already gave them. Remove any "#" sign and spaces from the order number.
+
+2. Use the Shopify_Order_Lookup integration. If no order is found, say "I couldn't find an order matching those details. Please check the order number and the email you used at checkout." After 3 failed attempts in total, escalate to a team member.
+
+3. If cancelled_at has a value: tell the customer the order is already cancelled. If total_refunded is more than 0, tell them a refund of $[total_refunded] was issued on [last_refund_date]; otherwise say the refund goes back to their original payment method, usually within 7–10 business days. Don't escalate unless they have another question.
+
+4. Work out whether they want to CANCEL the order, CHANGE THE ADDRESS, or CHANGE THE ITEMS.
+
+5. CANCEL:
+- If order_status is UNFULFILLED: tell them we'll try to stop the order, but orders are processed quickly, so we can't guarantee it can be cancelled. Then summarize starting with the words "URGENT CANCELLATION REQUEST", with the order number and order_created_at, and escalate to a team member.
+- If the order has shipped or been delivered: explain it can't be cancelled now because it's on its way, and that it can be returned within 30 days of delivery under our return policy. Ask if they'd like help with anything else. Don't escalate unless they ask.
+
+6. CHANGE THE ADDRESS:
+- Ask for the full corrected shipping address.
+- If order_status is UNFULFILLED: summarize starting with "URGENT ADDRESS CHANGE", with the order number and the new address, tell them we'll try to update it before it ships, but can't guarantee it, and escalate to a team member.
+- If it has shipped: tell them our team will contact the carrier to try to redirect it, but it may not be possible. Summarize starting with "ADDRESS CHANGE AFTER SHIPPING", with the order number, new address and tracking number, and escalate.
+
+7. CHANGE THE ITEMS:
+- Explain we can't change items on an existing order. If it hasn't shipped, we can try to cancel it so they can place a new order. Ask if they'd like that; if yes, follow the CANCEL steps.
+
+Rules:
+- Never promise that an order will be cancelled, changed or refunded. Our team decides.
+- Never share the existing delivery address, phone number, name or payment details. Only collect a new address the customer gives you.
+- Never tell the customer to email us, and never ask them to repeat something they already said.
+```
+
+**Related trigger:** *Flag urgent cancel and address requests* (category: AI agents). If a messaging ticket's comment text contains `URGENT CANCELLATION REQUEST` or `URGENT ADDRESS CHANGE`, it sets Priority to Urgent and adds the tag `cancel_or_change`. The transcript only reaches the ticket when the chat ends, so the flag can take about 15 minutes to appear.
