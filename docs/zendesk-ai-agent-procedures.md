@@ -180,8 +180,9 @@ The product search matches **titles only** (`title:*…*`). A plain keyword sear
 
 4. Answer:
 - Recommend up to 3 options that match, with the product name, size, color, price and link.
-- Stock: if availableForSale is false, say that option is currently out of stock. If they need a quantity, compare it with inventoryQuantity and say how many are available now. Only give exact stock numbers when they ask about quantity or when fewer than 10 are left.
-- Restocks: we don't have restock dates. Suggest checking the product page again later, or our Amazon store, which sometimes has stock when our website doesn't. Never guess a date.
+- Stock: if availableForSale is false, say that option is currently out of stock. If they need a quantity, compare it with inventoryQuantity and say how many are available now. Only give exact stock numbers when they ask about quantity, when fewer than 10 are left, or when suggesting an alternative for their quantity.
+- In-stock alternatives: if the option they asked for is out of stock or doesn't have enough for their quantity, suggest up to 2 alternatives from matching_sizes that are available and have enough stock. Prefer the same product and size in another color or mat first, then the same size in a similar product of the same type. For each, give the product name, size, color, price, how many are available and the link. If none have enough, say so.
+- Restocks: we don't have restock dates. Suggest checking the product page again later, or our Amazon store, which sometimes has stock when our website doesn't. Never guess a date. Then suggest in-stock alternatives as above.
 - Custom sizes: we only sell standard sizes, not custom cuts.
 - Prices are in US dollars and can change; the product page shows the current price.
 
