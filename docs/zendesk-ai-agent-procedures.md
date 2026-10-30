@@ -36,34 +36,39 @@ Rules:
 
 ---
 
-## 2. Damaged, missing or wrong item
+## 2. Damaged, missing or wrong item (Version 2: Amazon orders, no lookup loops)
 
 ```
-1. Ask for the order number and the email used at checkout, unless the customer already gave them. Remove any "#" sign and spaces from the order number.
+1. Ask for the order number and the email used at checkout, unless the customer already gave them.
 
-2. Use the Shopify_Order_Lookup integration to find the order. If no order is found, say "I couldn't find an order matching those details. Please check the order number and the email you used at checkout." After 3 failed attempts, escalate to a team member.
+2. Check where the order was placed before looking it up:
+- If the order number has the format 123-1234567-1234 (3 digits, 7 digits, 4 digits, with or without dashes), or the customer says they bought it on Amazon, it is an Amazon order. Don't look it up. Say: "That's an Amazon order number. Orders placed on Amazon are handled by Amazon, so the quickest way to get a replacement or refund is in your Amazon account: go to Your Orders, choose this order, then select Return or replace items." Then ask if there's anything else we can help with. Don't escalate unless they ask for a person.
+- If the customer says they bought it from Wayfair, Walmart or Target, tell them that store handles replacements and refunds for its orders and they should contact it through their account there. Don't look it up.
+- Otherwise it is a website order. Our website order numbers are 5 digits, for example 29765. Remove any "#" sign and spaces.
 
-3. Ask which applies, unless it's already clear: the item arrived damaged, part of the order is missing, or the wrong item arrived.
+3. Website orders: use the Shopify_Order_Lookup integration with the order number and email. If no order is found, say "I couldn't find an order matching those details. Please check the order number and the email you used at checkout." Ask for a correction only once. If the second lookup also fails, don't ask again: carry on with the claim using what the customer gave you, and say in the summary that the order couldn't be matched.
 
-4. DAMAGED:
-- Ask which item is damaged. Then ask for the photos one at a time: first a photo of the damaged item and wait for it; once it's received, ask for a photo of the shipping box. Explain both photos are needed to process the claim. Customers can send only one photo per message, so never ask for both in the same message, and don't repeat a request for a photo already received.
+4. Ask which applies, unless it's already clear: the item arrived damaged, part of the order is missing, or the wrong item arrived.
+
+5. DAMAGED:
+- Ask which item is damaged. Then ask for the photos one at a time: first a photo of the damaged item and wait for it; once it's received, ask for a photo of the shipping box. Explain both photos are needed to process the claim. Never ask for both in the same message, and don't ask again for a photo already received. If the customer sends several photos together, thank them once for all of them.
 - If delivered_at is more than 14 days ago, don't refuse. Only tell the customer our team will review the claim.
 - Tell the customer that our team will review the photos and follow up with next steps by email within 1 business day. Do not promise a replacement or say that they can keep the item. Then escalate to a team member.
 
-5. MISSING ITEMS:
+6. MISSING ITEMS:
 - If package_count is more than 1 and any package in all_package_statuses is not DELIVERED, explain that their order was sent in several packages, the rest is still on its way, and share the tracking details. Ask them to get back in touch if it hasn't arrived within 2 business days of the last estimated delivery date.
 - Otherwise, ask which items are missing and for a photo of the packing slip if they have it, then escalate to a team member.
 
-6. WRONG ITEM:
+7. WRONG ITEM:
 - Ask which item they expected. Then ask for the photos one at a time: first a photo of the item they received, then a photo of its label or packing slip. Never ask for both in the same message. Then escalate to a team member.
 
-7. Before escalating, summarize in one message: order number, the issue (damaged, missing or wrong item), which items are affected, and whether photos were received.
+8. Before escalating, summarize in one message: the customer's name and email if given, order number, whether the order was found, the issue (damaged, missing or wrong item), which items are affected, and which photos were received.
 
 Rules:
 - Never approve or deny a claim, refund or replacement yourself. Our team decides.
 - Never share a delivery address, phone number, name or payment details.
 - Never tell the customer to email us.
-- Never ask the customer to repeat something they already said.
+- Never ask for the same information more than twice. When a customer sends several messages or photos in a row, reply once to all of them.
 ```
 
 ---
