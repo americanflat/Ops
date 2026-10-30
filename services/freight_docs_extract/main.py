@@ -27,7 +27,9 @@ already exists the event is a no-op, and a second writer racing the first gets
 a 412 and stops. CSVs are written the same way, before it. A document that
 cannot be extracted gets quarantine/<sha256>.json (the reason) and a `failed`
 record, and the event is acknowledged so Eventarc does not redeliver it; an
-unexpected exception is quarantined the same way. Only transient errors
+unexpected exception is quarantined the same way, without a record. A
+quarantine that names a processed_uri does not stop a retry, so a record
+whose write failed after its quarantine is still written. Only transient errors
 (GCS/Document AI 429 or 5xx, network) answer 500, so Eventarc retries them.
 
 Auth: the service account's token from the metadata server; no keys.
@@ -218,11 +220,21 @@ def base_record(sha, doc_type, source_kind, raw_name, processed_name):
             "email_subject": None, "search_query": None, "meta": None, "extracted_at": None}
 
 
-def quarantine(sha, stage, reason, raw_name):
+def quarantine(sha, stage, reason, raw_name, processed_uri=None):
+    """processed_uri: the `failed` record that follows this quarantine. Kept in
+    the quarantine body so a retry knows that record may still be owed."""
     body = {"sha256": sha, "stage": stage, "reason": reason, "gcs_uri": f"gs://{BUCKET}/{raw_name}",
-            "at": now(), "by": "freight-docs-extract", "version": VERSION}
-    gcs_create(f"quarantine/{sha}.json", json.dumps(body, indent=2).encode(), "application/json")
-    print(json.dumps({"severity": "WARNING", "message": f"quarantined {sha}: {reason}"}), flush=True)
+            "processed_uri": processed_uri, "at": now(), "by": "freight-docs-extract", "version": VERSION}
+    if gcs_create(f"quarantine/{sha}.json", json.dumps(body, indent=2).encode(), "application/json"):
+        print(json.dumps({"severity": "WARNING", "message": f"quarantined {sha}: {reason}"}), flush=True)
+
+
+def parked(sha):
+    """True when quarantine/<sha>.json is final. A quarantine that promised a
+    processed record is not: if the record write failed after it (a transient
+    error, then Eventarc's retry), the retry must run again and write it."""
+    data = gcs_read(f"quarantine/{sha}.json")
+    return data is not None and not json.loads(data).get("processed_uri")
 
 
 def finish(rec, extra_files):
@@ -240,7 +252,7 @@ def handle_pdf(name, doc_type, yyyy, mm, sha):
     processed = f"{stem}.ndjson"
     if gcs_exists(processed):
         return "already processed"
-    if gcs_exists(f"quarantine/{sha}.json"):
+    if parked(sha):
         return "already quarantined"
     rec = base_record(sha, doc_type, "pdf_attachment", name, processed)
 
@@ -249,7 +261,7 @@ def handle_pdf(name, doc_type, yyyy, mm, sha):
         return "object gone"
     if hashlib.sha256(data).hexdigest() != sha:
         rec.update(parser="none", parse_status="failed", parse_error="content SHA-256 does not match the name")
-        quarantine(sha, "extract", rec["parse_error"], name)
+        quarantine(sha, "extract", rec["parse_error"], name, rec["processed_uri"])
         return finish(rec, [])
 
     meta_raw = gcs_read(f"raw/{doc_type}/{yyyy}/{mm}/{sha}.meta.json")
@@ -284,7 +296,7 @@ def handle_pdf(name, doc_type, yyyy, mm, sha):
             extra.append((f"{stem}.tariffs.csv", tariff_csv(rec["typed"])))
         except cel.ParseError as exc:
             rec.update(parse_status="failed", parse_error=f"7501 parse: {exc}")
-            quarantine(sha, "extract", rec["parse_error"], name)
+            quarantine(sha, "extract", rec["parse_error"], name, rec["processed_uri"])
         return finish(rec, extra)
 
     rec["parser"] = "pdftotext-layout"
@@ -303,7 +315,7 @@ def handle_pdf(name, doc_type, yyyy, mm, sha):
         rec["parse_status"] = "unparsed"
     else:
         rec["parse_status"] = "failed"
-        quarantine(sha, "extract", rec["parse_error"] or "no text extracted", name)
+        quarantine(sha, "extract", rec["parse_error"] or "no text extracted", name, rec["processed_uri"])
     return finish(rec, extra)
 
 
@@ -315,7 +327,7 @@ def handle_email(name, doc_type, yyyy, mm, message_id):
     processed = f"processed/{doc_type}/{yyyy}/{mm}/{sha}.ndjson"
     if gcs_exists(processed):
         return "already processed"
-    if gcs_exists(f"quarantine/{sha}.json"):
+    if parked(sha):
         return "already quarantined"
     rec = base_record(sha, doc_type, "email_body", name, processed)
     try:
@@ -323,7 +335,7 @@ def handle_email(name, doc_type, yyyy, mm, message_id):
     except ValueError as exc:
         rec.update(parser="email-body", parse_status="failed", parse_error=f"not JSON: {exc}",
                    source_file=message_id)
-        quarantine(sha, "extract", rec["parse_error"], name)
+        quarantine(sha, "extract", rec["parse_error"], name, rec["processed_uri"])
         return finish(rec, [])
     rec.update(parser="email-body", meta=env, source_file=message_id, full_text=env.get("body_text"),
                gmail_message_id=env.get("gmail_message_id") or message_id,
@@ -333,7 +345,7 @@ def handle_email(name, doc_type, yyyy, mm, message_id):
                parse_status="unparsed" if (env.get("body_text") or "").strip() else "failed")
     if rec["parse_status"] == "failed":
         rec["parse_error"] = "empty body"
-        quarantine(sha, "extract", rec["parse_error"], name)
+        quarantine(sha, "extract", rec["parse_error"], name, rec["processed_uri"])
     return finish(rec, [])
 
 
