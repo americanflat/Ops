@@ -16,7 +16,7 @@
  * on the next run.
  *
  * Nothing here reads PDF contents or guesses at layouts. doc_type is routing
- * only (search + filename + subject); the extract service decides the rest.
+ * only (search + headers + filename + subject); the extract service decides the rest.
  *
  * Setup and IAM: docs/freight-docs-pdf-ingestion.md in americanflat/Ops.
  */
@@ -30,19 +30,37 @@ var CONFIG = {
 
 // Gmail searches. -label:<LABEL> is appended to each. savePdfs writes PDF
 // attachments; saveBody writes the message body as JSON (for the emails that
-// carry their data in the text, not in a PDF).
+// carry their data in the text, not in a PDF). docType(filename, subject,
+// headers) names the doc_type, or returns null to skip that message: a thread
+// matches as a whole, but not every message in it is a freight document.
 var SEARCHES = [
-  { name: 'wwl', query: 'from:wwllmail.com has:attachment',
-    savePdfs: true, saveBody: false, docType: classifyWwl },
+  { name: 'wwl', query: '(from:wwllmail.com OR cc:wwllmail.com OR to:wwllmail.com) has:attachment',
+    savePdfs: true, saveBody: false, docType: routeWwl },
   { name: 'billcom_cbp', query: 'from:hq.bill.com "Customs and Border Protection"',
     savePdfs: true, saveBody: true, docType: function () { return 'billcom_cbp_reminder'; } },
-  { name: 'customs_release', query: 'subject:("customs release" OR "customs clearance")',
+  // WWL titles these both "CUSTOMS RELEASE" and "CUSTOM RELEASE".
+  { name: 'customs_release', query: 'subject:(customs OR custom) subject:(release OR clearance)',
     savePdfs: true, saveBody: true, docType: function () { return 'customs_release'; } },
 ];
 
-// Worldwide Logistics (wwllmail.com) sends several document kinds from one
-// address. Route on the attachment filename and the subject only; the 7501
-// is also re-detected from its text by the extract service.
+// Worldwide Logistics (wwllmail.com) mail reaches Administrator@ three ways:
+//   * from WWL directly;
+//   * from WWL through the nyc_ops@ group, which rewrites From to
+//     NYC_Ops@americanflat.com and leaves wwllmail.com on Cc (Reply-To and
+//     X-Original-Sender keep the real sender);
+//   * to WWL, from sourcing: the factory's commercial invoice and packing list.
+// A message that involves WWL in none of these ways is skipped.
+function routeWwl(filename, subject, h) {
+  var wwl = /wwllmail\.com/i;
+  var fromWwl = wwl.test(h.from) || wwl.test(h.replyTo) || wwl.test(h.originalSender);
+  if (!fromWwl && wwl.test(h.to)) return 'factory_shipping_docs';
+  if (!fromWwl && !wwl.test(h.cc)) return null;
+  return classifyWwl(filename, subject);
+}
+
+// WWL sends several document kinds from one address. Route on the attachment
+// filename and the subject only; the 7501 is also re-detected from its text
+// by the extract service.
 function classifyWwl(filename, subject) {
   var s = (filename || '') + ' ' + (subject || '');
   if (/7501|entry\s*summary/i.test(s)) return 'customs_7501';
@@ -140,9 +158,10 @@ function exportThread_(bucket, threadId, searches) {
     searches.forEach(function (search) {
       if (search.savePdfs) {
         pdfParts_(msg.payload).forEach(function (part) {
+          var docType = search.docType(part.filename, h.subject, h);
+          if (!docType) return;
           var bytes = partBytes_(msg.id, part);
           var sha = sha256Hex_(bytes);
-          var docType = search.docType(part.filename, h.subject);
           var base = 'raw/' + docType + '/' + ym + '/' + sha;
           var meta = {
             sha256: sha,
@@ -151,6 +170,8 @@ function exportThread_(bucket, threadId, searches) {
             gmail_thread_id: threadId,
             date: date.toISOString(),
             sender: h.from,
+            to: h.to,
+            cc: h.cc,
             subject: h.subject,
             attachment_filename: part.filename,
             size_bytes: bytes.length,
@@ -165,13 +186,15 @@ function exportThread_(bucket, threadId, searches) {
           tally(gcsCreate_(bucket, base + '.pdf', bytes, 'application/pdf'));
         });
       }
-      if (search.saveBody) {
-        var docTypeBody = search.docType('', h.subject);
+      var docTypeBody = search.saveBody && search.docType('', h.subject, h);
+      if (docTypeBody) {
         var body = {
           gmail_message_id: msg.id,
           gmail_thread_id: threadId,
           date: date.toISOString(),
           sender: h.from,
+          to: h.to,
+          cc: h.cc,
           subject: h.subject,
           doc_type: docTypeBody,
           search_name: search.name,
@@ -224,11 +247,12 @@ function labelId_(name) {
 }
 
 function headers_(msg) {
-  var out = { from: '', subject: '' };
+  var names = { 'from': 'from', 'to': 'to', 'cc': 'cc', 'subject': 'subject', 'reply-to': 'replyTo',
+                'x-original-sender': 'originalSender' };
+  var out = { from: '', to: '', cc: '', subject: '', replyTo: '', originalSender: '' };
   ((msg.payload && msg.payload.headers) || []).forEach(function (h) {
-    var n = h.name.toLowerCase();
-    if (n === 'from') out.from = h.value;
-    if (n === 'subject') out.subject = h.value;
+    var key = names[h.name.toLowerCase()];
+    if (key) out[key] = h.value;
   });
   return out;
 }
