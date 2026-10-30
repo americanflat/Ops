@@ -2,7 +2,8 @@
 
 Customs and freight paperwork arrives by email in the Administrator@ mailbox:
 CBP 7501 entry summaries, CLA/LAX/EWR invoices and per diem bills from
-Worldwide Logistics (`wwllmail.com`), bill.com approval reminders for CBP
+Worldwide Logistics (`wwllmail.com`), the factory commercial invoices and
+packing lists sourcing sends to WWL, bill.com approval reminders for CBP
 payments, and customs release/clearance notices. This pipeline exports them
 from Gmail to GCS hourly, extracts every document into a raw record, loads
 those into a landing table, and sends 7501s on to `finance.customs_entries`
@@ -23,27 +24,48 @@ real samples exist to write parsers against.
 
 ## Status
 
-Built 2026-10-21 on branch `claude/freight-docs-pdf-ingestion` (cut from
-`claude/confident-cori-l7xy56`, which holds the 7501 loader). **Nothing is
-deployed and no table exists.** Nobody on the project can open the
-Administrator@ mailbox, so the Gmail searches have not been run against real
-mail.
+Branch `claude/freight-docs-pdf-ingestion`, cut from
+`claude/confident-cori-l7xy56` (the 7501 loader). Neither is merged to `main`.
 
-Checked: `python3 -m py_compile` on both services; the existing
+**Deployed 2026-10-21 (image `614864e`); no documents yet, because the Apps
+Script is not installed.**
+
+* Live: bucket, extract service, Eventarc trigger, Document AI processor
+  `30a7e828c27dd6c1`, load job, hourly Scheduler, and every grant in the IAM
+  table. `finance.freight_documents_raw`, `finance.customs_entries` and the
+  `customs_entry_tariffs` view exist, all empty.
+* As of 2026-10-30 the load job had run 216 times, hourly, all successful,
+  each reporting `0 processed document(s)`. The bucket is empty: nothing has
+  been exported yet.
+* Reviewed by Anthony's Claude on 2026-10-30. Its findings are fixed on the
+  branch: the WWL search missed mail rewritten by the `nyc_ops@` group;
+  factory shipping documents were not collected; "CUSTOM RELEASE" subjects were
+  missed; a failed document's record could be lost on retry. The extract fix
+  reaches Cloud Run on the next `deploy/deploy.sh`.
+* Open question from that review: **do 7501 PDFs reach Administrator@ by email
+  at all?** Since July they may arrive only through Bill.com. The count in
+  [Installing](#installing-the-apps-script-written-for-the-administrator-account-owner)
+  step 1 answers it; if it's low, the 7501 half needs a Bill.com export.
+* No alerting yet (see Gotchas).
+
+Checked offline: `python3 -m py_compile` on both services; the existing
 `tools/test_customs_entries_load.py` passes unchanged; `bash -n` and
-`deploy/deploy.sh --dry-run`; the Apps Script parses (`node --check`); the
-extractor was exercised locally against an in-memory GCS (unknown PDF, 7501
-from the test fixture text, scanned PDF, hash mismatch, email body, replays,
-a canned Document AI response). Not checked: shellcheck (not installed), the
-Docker builds, anything against GCP or Gmail.
+`deploy/deploy.sh --dry-run`; the Apps Script parses (`node --check`) and its
+WWL routing was run on sample headers; the extractor was exercised against an
+in-memory GCS (unknown PDF, 7501 from the test fixture text, scanned PDF, hash
+mismatch, email body, replays, a canned Document AI response, a transient
+failure between quarantine and record). Not checked: shellcheck, and anything
+against real mail.
 
 ## Flow (an ASCII diagram from Gmail to BigQuery)
 
 ```
  Administrator@ Gmail
-   from:wwllmail.com has:attachment                       (7501s, CLA/LAX/EWR invoices, per diem)
-   from:hq.bill.com "Customs and Border Protection"       (payment reminders: body text)
-   subject:("customs release" OR "customs clearance")     (entry <-> B/L / container: body text)
+   (from:wwllmail.com OR cc:wwllmail.com OR to:wwllmail.com) has:attachment
+                                     (from WWL: 7501s, CLA/LAX/EWR invoices, per diem;
+                                      to WWL: factory commercial invoices, packing lists)
+   from:hq.bill.com "Customs and Border Protection"           (payment reminders: body text)
+   subject:(customs OR custom) subject:(release OR clearance) (entry <-> B/L / container: body text)
         |
         |  Apps Script, hourly, as Administrator@  (threads without label ops/exported)
         |  POST GCS JSON API, ifGenerationMatch=0; label ops/exported after the last write
@@ -85,16 +107,20 @@ access prevention on).
 | Object | Written by | Contents |
 |---|---|---|
 | `raw/<doc_type>/<YYYY>/<MM>/<sha256>.pdf` | Apps Script | The attachment bytes. Name = SHA-256 of the bytes (`Utilities.computeDigest`) |
-| `raw/<doc_type>/<YYYY>/<MM>/<sha256>.meta.json` | Apps Script | Gmail message id, thread id, date, sender, subject, attachment filename, search name and query, size |
+| `raw/<doc_type>/<YYYY>/<MM>/<sha256>.meta.json` | Apps Script | Gmail message id, thread id, date, sender, To, Cc, subject, attachment filename, search name and query, size |
 | `raw/email/<doc_type>/<YYYY>/<MM>/<message_id>.json` | Apps Script | Body-only email: headers, plain-text body (HTML stripped if no text part), attachment names, search |
 | `processed/<doc_type>/<YYYY>/<MM>/<sha256>.ndjson` | extract | One raw extraction record — exactly the landing-table columns except `ingested_*` |
 | `processed/…/<sha256>.tariffs.csv` | extract | 7501 only: one row per HTS row |
 | `processed/…/<sha256>.table<N>.csv` | extract | One per Document AI table |
-| `quarantine/<sha256>.json` | extract or load | `{sha256, stage, reason, gcs_uri, at, by}` |
+| `quarantine/<sha256>.json` | extract or load | `{sha256, stage, reason, gcs_uri, processed_uri, at, by}` |
 
 `<doc_type>` is routing, chosen by the Apps Script: `customs_7501`,
-`wwl_invoice`, `wwl_per_diem`, `wwl_other` (WWL, by filename/subject),
-`billcom_cbp_reminder`, `customs_release`. `<YYYY>/<MM>` is the email date in
+`wwl_invoice`, `wwl_per_diem`, `wwl_other` (from WWL, by filename/subject),
+`factory_shipping_docs` (sent to WWL), `billcom_cbp_reminder`,
+`customs_release`. A WWL-search message counts as *from WWL* when
+`wwllmail.com` is in its From, Reply-To or X-Original-Sender, or only in Cc
+(the `nyc_ops@` group's rewrite); as *to WWL* when it's in To and the sender
+is someone else. Other messages in a matching thread are skipped. `<YYYY>/<MM>` is the email date in
 UTC. For emails, `<sha256>` in `processed/` is the hash of the exported JSON
 object. A PDF whose text contains "CBP Form 7501" is treated as a 7501
 wherever it was routed (`doc_type` vs `routed_doc_type` in the table).
@@ -104,7 +130,7 @@ wherever it was routed (`doc_type` vs `routed_doc_type` in the table).
 | Stage | Mechanism | What a repeat does |
 |---|---|---|
 | Apps Script → `raw/` | `ifGenerationMatch=0` on every upload; PDF named by its SHA-256 | Existing name → HTTP 412, counted as done. The same PDF in two emails is stored once (first meta wins). Label `ops/exported` is added only after every object for the thread returned 200 or 412; a failure leaves the thread unlabelled for the next run. `LockService` stops overlapping runs. |
-| extract → `processed/`, `quarantine/` | Skip if `processed/…<sha256>.ndjson` or `quarantine/<sha256>.json` exists; all writes `ifGenerationMatch=0`; the NDJSON is written last as the completion marker | Eventarc's at-least-once redelivery and racing instances end in a 412 no-op. |
+| extract → `processed/`, `quarantine/` | Skip if `processed/…<sha256>.ndjson` exists, or a quarantine without `processed_uri` (an unexpected error) does; all writes `ifGenerationMatch=0`; the NDJSON is written last as the completion marker | Eventarc's at-least-once redelivery and racing instances end in a 412 no-op. A quarantine whose `failed` record was not written yet lets the retry write it. |
 | load → `freight_documents_raw` | Only sha256s not already in the table are staged; MERGE `ON sha256` (insert, or update only when `extracted_at` is newer, i.e. `--full` after a re-extraction); post-load invariant `COUNT(*) = COUNT(DISTINCT sha256)` and every staged sha256 present, else exit 6 | Nothing to stage; or MERGE matches every row and changes nothing. |
 | load → `customs_entries` | The loader's own rules, unchanged: same entry + same SHA-256 skipped; different PDF for a loaded entry refused (exit 3); its own post-load verify (exit 6). The job only offers it sha256s not already in `customs_entries.source_sha256` and not in `quarantine/`, one PDF per call, never `--replace`/`--allow-mismatch` | Nothing offered. A refused document is quarantined and never offered again. |
 
@@ -143,10 +169,11 @@ pypdf is not used.
 
 ## Deploying (who runs what, in order)
 
-All from a checkout of this branch, in a shell with `gcloud`, `bq`, `curl` and
-`python3` (Cloud Shell works). Claude Code sessions are read-only on BigQuery
-and cannot create resources or grant IAM; none of these steps can be run from
-one.
+All from a checkout of this branch, in a Linux shell with `gcloud`, `bq`,
+`curl` and `python3`: WSL or Cloud Shell, not Windows (see Gotchas). Claude
+Code sessions are read-only on BigQuery and cannot create resources or grant
+IAM; none of these steps can be run from one. Steps 1–3 were done on
+2026-10-21 by Ivan; re-run step 1 to roll out code changes.
 
 1. **Project Owner who is also OWNER of `finance` (ivan@americanflat.com)** —
    review, then provision everything:
@@ -179,7 +206,8 @@ one.
    python3 tools/customs_entries_load.py --init
    ```
 
-4. **Administrator@ account owner** — install the Apps Script (next section).
+4. **Anthony** (has Administrator@ access) — count the mail, then install the
+   Apps Script (next section).
 5. **Ivan** — after the first hourly export, run the load once and look:
 
    ```bash
@@ -218,15 +246,19 @@ and the only change it makes to your mailbox is adding the label
 `ops/exported` to the threads it has copied. It never sends, deletes or moves
 mail.
 
-1. **Check the searches first.** In Gmail, paste each of these into the search
-   box and confirm the results are the documents you expect (and nothing
-   private):
-   * `from:wwllmail.com has:attachment`
+1. **Check the searches first, and count.** In Gmail, paste each of these into
+   the search box and confirm the results are the documents you expect (and
+   nothing private):
+   * `(from:wwllmail.com OR cc:wwllmail.com OR to:wwllmail.com) has:attachment`
    * `from:hq.bill.com "Customs and Border Protection"`
-   * `subject:("customs release" OR "customs clearance")`
+   * `subject:(customs OR custom) subject:(release OR clearance)`
 
-   If one is wrong, tell Ivan before going further; the searches are at the
-   top of `Code.gs`.
+   Then count the 7501s that arrive by email:
+   `(from:wwllmail.com OR cc:wwllmail.com) has:attachment after:2026/07/01 (7501 OR "entry summary")`.
+   Send Ivan the number. If it's close to zero, the 7501s come only through
+   Bill.com and that half needs a different source; the other documents
+   still justify installing. If a search is wrong, tell Ivan before going
+   further; the searches are at the top of `Code.gs`.
 2. Signed in as Administrator@, open <https://script.google.com> → **New project**.
    Rename it `Freight docs export`.
 3. **Project Settings** (gear icon) → tick **Show "appsscript.json" manifest
@@ -288,25 +320,22 @@ Google Cloud Platform project).
 
 ## Blockers before first run
 
-1. **Ivan (project Owner, `finance` OWNER)** — run `deploy/deploy.sh --dry-run`,
-   review, then `deploy/deploy.sh`. Nothing here can be provisioned from a
-   Claude Code session.
-2. **Ivan (`finance` OWNER)** — create the landing table:
-   `bq query --project_id=americanflat --use_legacy_sql=false "$(cat schemas/freight_documents_raw.sql)"`.
-   Until it exists, the load job exits 5.
-3. **Ivan or Anthony** — `python3 tools/customs_entries_load.py --init`.
-   Until `finance.customs_entries` exists, the load job loads the landing table
-   and then exits 7.
-4. **Administrator@ account owner** — check the three searches return the
-   right mail, then install the Apps Script (section above). Nobody else can:
-   the mailbox is not accessible to this project. Confirm the account address;
-   `deploy.sh` grants bucket access to `user:administrator@americanflat.com`
-   (override with `FREIGHT_DOCS_EXPORTER`).
-5. **Workspace super admin, if needed** — allow the script's OAuth scopes if
+Done on 2026-10-21: deploy, landing table, `customs_entries` table and view.
+Remaining, in order:
+
+1. **Anthony** — run the three searches and the 7501 count in Administrator@
+   ([Installing](#installing-the-apps-script-written-for-the-administrator-account-owner)
+   step 1) and send Ivan the numbers. A low 7501 count means the 7501 half
+   needs a Bill.com export; it doesn't block the rest.
+2. **Ivan** — re-run `deploy/deploy.sh` from WSL so Cloud Run picks up the
+   extract retry fix.
+3. **Anthony** — install the Apps Script (section above). `deploy.sh` granted
+   bucket access to `user:administrator@americanflat.com`.
+4. **Workspace super admin, if needed** — allow the script's OAuth scopes if
    the Workspace blocks unverified internal apps.
-6. **Ivan** — the 7501 loader on the source branch is not merged to `main`;
-   deploy from this branch or merge both together, so the images carry the
-   same `tools/customs_entries_load.py` that was reviewed.
+5. **Ivan** — add alerting (see Gotchas) before relying on the data.
+6. **Ivan** — merge this branch and `claude/confident-cori-l7xy56` to `main`
+   together. Production runs from these branches today.
 
 ## Gotchas
 
@@ -322,10 +351,22 @@ Google Cloud Platform project).
   and loaded once; its row carries the first message's provenance. If the two
   copies were routed to different `doc_type`s there are two NDJSONs with one
   sha256; the load keeps the typed 7501 record, else the newest.
-* **Routing is a guess.** `doc_type` for WWL mail comes from the attachment
-  name and subject (`7501|entry summary`, `per diem`, `invoice|inv`, else
-  `wwl_other`). The extractor re-detects 7501s from the text; other
-  misroutes are only a label in the landing table and can be corrected there.
+* **Routing is a guess.** For WWL mail, the headers decide from-WWL vs
+  to-WWL (`factory_shipping_docs`); then the attachment name and subject decide
+  the type (`7501|entry summary`, `per diem`, `invoice|inv`, else
+  `wwl_other`). A sourcing email that only Cc's WWL is routed as WWL. The
+  extractor re-detects 7501s from the text; other misroutes are only a label
+  in the landing table and can be corrected there.
+* **Nothing alerts anyone yet.** Failed job runs, quarantined files, and — the
+  likelier failure — a search that silently matches nothing all show only in
+  logs: the job ran green 216 times on an empty bucket. Planned: an alert on
+  job failure, and a daily check that new documents arrived and the
+  quarantine count didn't grow.
+* **The load is hourly on purpose, not on Eventarc.** Loading per document
+  would run the 7501 loader in parallel; its check-then-append could then load
+  an original and its correction twice. Parallel runs would also share
+  `freight_documents_raw_stage`. For lower latency, shorten
+  `FREIGHT_DOCS_LOAD_SCHEDULE` (e.g. `*/15 * * * *`) and re-run `deploy.sh`.
 * **Quarantine is final for the pipeline.** Nothing retries a quarantined
   sha256. A refused corrected 7501 (different PDF, same entry) is the expected
   case: a person runs `tools/customs_entries_load.py --replace` on it by hand,
@@ -345,9 +386,12 @@ Google Cloud Platform project).
 * **Gmail label search.** The script excludes `-label:ops/exported`; if the
   Workspace renders nested labels differently, threads would be re-exported
   each hour — harmless (412s) but wasteful. Check the execution log's `existed` count.
-* **Line endings.** On Windows with `core.autocrlf`, `deploy/deploy.sh` may be
-  checked out with CRLF and fail in bash; run it from Cloud Shell or macOS, or
-  `git checkout` with `core.autocrlf=input`.
+* **Deploy from Linux, not Windows.** On Windows, `deploy/deploy.sh` may be
+  checked out with CRLF line endings; `python3` can be the Microsoft Store
+  placeholder; and values captured from Windows `gcloud` can carry a trailing
+  `\r`. The same cmd.exe layer cuts multi-line arguments at the first newline,
+  so `customs_entries_load.py --init` on Windows creates the table but fails
+  on the view (`Unexpected end of script`). Use WSL or Cloud Shell.
 * **Apps Script project.** The script uses its default Apps Script Cloud
   project. If GCS uploads fail with "API not enabled", switch it to the
   `americanflat` project (Project Settings), which has the Storage API on.
