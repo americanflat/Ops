@@ -44,7 +44,7 @@ LINE = re.compile(r"^\((\d{1,2}:\d{2}:\d{2}\s?[AP]M)\)\s+([^:]+?):\s?(.*)$")
 STAFF = re.compile(r"Americanflat\b|Automated Response", re.I)
 EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 ORDER = re.compile(r"(?<![\d.$-])((?:2|3)\d{4})(?![\d-])")
-NAME = re.compile(r"(?i:\bmy name is)\s+([A-Za-z][A-Za-z'-]+(?:\s+[A-Za-z][A-Za-z'-]+)?)")
+NAME = re.compile(r"(?i:\bmy name is) +([A-Za-z][A-Za-z'-]+(?: +[A-Za-z][A-Za-z'-]+)?)")
 MAX_LEN = 120
 
 # First match wins, so order matters: the most specific / most urgent first.
@@ -57,12 +57,12 @@ TOPIC_RULES = [
     ("Return labels", re.compile(r"(return|shipping|mailing)\s+label", re.I)),
     ("Return", re.compile(r"\breturn", re.I)),
     ("Refund", re.compile(r"\brefund", re.I)),
-    ("Where is my order", LATE),
+    ("Where is my order", re.compile(f"(?:{LATE.pattern})|not (been )?delivered|wasn'?t delivered", re.I)),
     ("Bulk / wholesale", BULK),
     ("Back in stock", OOS),
     ("Discount code", re.compile(r"discount|promo|coupon|\bcode\b", re.I)),
 ]
-PERSON = re.compile(r"\bhuman\b|real person|\bagent\b|representative|speak to someone", re.I)
+PERSON = re.compile(r"\bhuman\b|real person|\bagent\b|representative|\brep\b|(speak|talk) to (someone|a person)|person (be in|to answer)", re.I)
 FLAGS = [
     ("chargeback threat", re.compile(r"chargeback|dispute|credit card company|\bbbb\b|better business", re.I)),
     ("deadline", re.compile(r"\basap\b|urgent|deadline|wedding|funeral|art show|this weekend|next weekend|by tomorrow", re.I)),
@@ -116,7 +116,9 @@ def customer_lines(comments):
             if m:
                 who, text = m.group(2), m.group(3)
                 current = None if STAFF.search(who) else who
-                if current and not text.startswith("uploaded:"):
+                if current and who.endswith(" uploaded"):
+                    current = None  # a photo or file: skip its name and URL lines
+                elif current:
                     said.append(text)
             elif current and raw.strip() and not raw.startswith(("URL:", "Type:", "Size:")):
                 said.append(raw.strip())
@@ -166,7 +168,7 @@ def subject_for(ticket, comments, requester):
     email = requester.get("email") or (found[-1] if found else "")
     parts += [name, email.lower()]
     parts += [flag for flag, pat in FLAGS if pat.search(text)]
-    subject = " · ".join(dict.fromkeys(p for p in parts if p))
+    subject = " · ".join(dict.fromkeys(re.sub(r"\s+", " ", p).strip() for p in parts if p and p.strip()))
     return subject[:MAX_LEN]
 
 
