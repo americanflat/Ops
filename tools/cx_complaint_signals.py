@@ -46,7 +46,7 @@ OOS_MIN = 2                   # out-of-stock asks for one product family
 BULK_MIN_QTY = 25
 
 CARRIERS = {"FEDX": "FedEx", "UPSN": "UPS", "UPS": "UPS", "USPS": "USPS", "USP_": "USPS",
-            "AMZX": "Amazon Shipping", "GLOB": "GlobalPost", "CPUP": "Canada Post", "CTII": "Central Transport",
+            "AMZX": "Amazon Shipping", "GLOB": "UPS (GLOB)", "CPUP": "UPS (CPUP)", "CTII": "Central Transport",
             "EXLA": "Estes"}
 
 FAMILIES = [
